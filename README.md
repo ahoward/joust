@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.svg" alt="joust" width="480"/>
+  <img src="media/logo.svg" alt="joust" width="480"/>
 </p>
 
 <p align="center">
