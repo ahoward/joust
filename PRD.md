@@ -63,9 +63,9 @@ growth. The full history is always preserved on disk.
   rfc.yaml            # human-editable config (personas, keys, limits)
   snowball.json       # current working state (pretty JSON, atomic copy)
   history/            # append-only immutable ledger
-    000.json          # seed
-    001.json          # security pass (or rejected -- status lives inside the file)
-    002.json          # cfo pass
+    000-main.json     # seed (main bootstrap)
+    001-security.json # security pass
+    002-cfo.json      # cfo pass
     ...
   logs/               # raw token streams, one per agent + execution log
     execution.log
@@ -74,8 +74,9 @@ growth. The full history is always preserved on disk.
 ```
 
 **Rules:**
-- Metadata lives inside the JSON, never in filenames. Filenames are sequential
-  numbers, nothing more.
+- Filenames use the pattern `NNN-slug.json` where slug is the agent name from
+  config. This makes `ls history/` immediately legible. Status metadata
+  (rejected, passed, aborted) lives inside the JSON, not the filename.
 - `snowball.json` is a bomber copy (not a symlink) of the latest valid history
   entry. Disk is cheap; corruption is expensive.
 

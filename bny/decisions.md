@@ -15,3 +15,10 @@ Append-only log of architectural decisions.
 - `--tank` mode for unstoppable execution (backoff on 429s, skip dead endpoints)
 - full draft rewrites every pass (structural integrity over token golfing)
 - compaction threshold default 10 (amortized for modern large context windows)
+
+## 2026-04-14: history filenames
+
+- history files use `NNN-slug.json` pattern (e.g., `001-security.json`, `002-cfo.json`)
+- the agent slug makes `ls history/` immediately legible without opening files
+- status metadata (rejected, passed, aborted) still lives inside the json, not the filename
+- this is structural info (who), not status info (what happened) -- different from encoding REJECTED into filenames

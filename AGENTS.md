@@ -87,21 +87,21 @@ data flow: `cli.ts → config.ts (load yaml) → run.ts (loop) → context.ts (c
 
 ```
 <project-slug>/
-  rfc.yaml            human-editable config (personas, keys, limits). re-read per round.
-  snowball.json       current working state (pretty JSON, bomber atomic copy)
-  history/            append-only immutable ledger
-    000.json          seed
-    001.json          jouster pass (status lives inside the json, not the filename)
-    002.json          next pass
-  logs/               raw token streams
-    execution.log     system events (retries, timeouts, kills)
-    agent-main.log    raw token stream from main
+  rfc.yaml              human-editable config (personas, keys, limits). re-read per round.
+  snowball.json         current working state (pretty JSON, bomber atomic copy)
+  history/              append-only immutable ledger
+    000-main.json       seed (main bootstrap)
+    001-security.json   security pass
+    002-cfo.json        cfo pass
+  logs/                 raw token streams
+    execution.log       system events (retries, timeouts, kills)
+    agent-main.log      raw token stream from main
     agent-security.log
 ```
 
 rules:
-- metadata lives inside json files, never in filenames
-- filenames are sequential numbers, nothing more
+- filenames use `NNN-slug.json` where slug is the agent name from config
+- status metadata (rejected, passed, aborted) lives inside the json, not the filename
 - `snowball.json` is a bomber copy (not a symlink)
 - all writes use POSIX atomic rename (`.tmp` → `fsync` → `rename`)
 

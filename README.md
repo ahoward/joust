@@ -103,18 +103,19 @@ patches. structural integrity over token golfing.
 
 ```
 realtime-bidding-engine/
-  rfc.yaml            # your config. edit between rounds.
-  snowball.json       # current state (pretty json, atomic copy)
-  history/            # append-only immutable ledger
-    000.json          # seed
-    001.json          # security pass
-    002.json          # cfo pass
-  logs/               # raw token streams
+  rfc.yaml              # your config. edit between rounds.
+  snowball.json         # current state (pretty json, atomic copy)
+  history/              # append-only immutable ledger
+    000-main.json       # seed
+    001-security.json   # security pass
+    002-cfo.json        # cfo pass
+  logs/                 # raw token streams
     execution.log
     agent-security.log
 ```
 
-metadata lives inside the json. filenames are sequential numbers. state survives
+filenames use `NNN-slug.json` so `ls history/` tells the story at a glance.
+status (rejected, passed, aborted) lives inside the json, not the filename. state survives
 `kill -9` via atomic writes (`.tmp` -> `fsync` -> `rename`). `joust run` always
 resumes.
 
