@@ -1,0 +1,5 @@
+gemini-convo.txt
+gemini-convo-wrapped.txt
+.playwright-mcp/
+.envrc
+tmp/
