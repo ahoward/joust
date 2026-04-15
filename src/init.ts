@@ -114,7 +114,7 @@ export async function init(args: string[], options: { run_after?: boolean } = {}
   ensure_dir(join(dir, "logs"));
 
   // write config snapshot
-  await write_atomic(join(dir, "rfc.yaml"), generate_default_config());
+  write_atomic(join(dir, "rfc.yaml"), generate_default_config());
 
   // write seed history entry
   const entry: HistoryEntry = {
@@ -126,7 +126,7 @@ export async function init(args: string[], options: { run_after?: boolean } = {}
     snowball,
   };
 
-  await commit_state(dir, 0, "main", entry);
+  commit_state(dir, 0, "main", entry);
 
   // log summary
   log(`\ncreated: ${dir}/`);

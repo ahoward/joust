@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { load_config, expand_env_vars } from "./utils";
+import { load_config } from "./utils";
 import type { JoustConfig, AgentConfig, JoustDefaults } from "./types";
 
 // --- built-in defaults ---
@@ -43,10 +43,20 @@ const BUILTIN_AGENTS: Record<string, Omit<AgentConfig, "name">> = {
 // --- resolve config ---
 
 function expand_agent_config(name: string, raw: Record<string, any>, defaults: JoustDefaults): AgentConfig {
+  const raw_key = raw.api_key ?? "$ANTHROPIC_API_KEY";
+
+  // api_key must be an env var reference — never a literal key
+  if (!raw_key.startsWith("$")) {
+    throw new Error(
+      `agent '${name}' api_key must be an env var reference like $ANTHROPIC_API_KEY, got literal string. ` +
+      `Never put raw API keys in config files.`
+    );
+  }
+
   return {
     name,
     model: raw.model ?? "claude-sonnet-4-6",
-    api_key: expand_env_vars(raw.api_key ?? "$ANTHROPIC_API_KEY"),
+    api_key: raw_key, // store raw $VAR reference — resolved lazily in get_model()
     system: raw.system ?? "",
     temperature: raw.temperature ?? defaults.temperature,
   };

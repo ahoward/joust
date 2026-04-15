@@ -3,6 +3,7 @@
 import { init } from "./init";
 import { run, type RunOptions } from "./run";
 import { tail } from "./tail";
+import { status, export_draft, diff, plan, ask } from "./commands";
 import { log } from "./utils";
 
 // --- arg parsing ---
@@ -73,6 +74,38 @@ async function main() {
       break;
     }
 
+    case "status": {
+      status(rest[0] || ".");
+      break;
+    }
+
+    case "export": {
+      export_draft(rest[0] || ".");
+      break;
+    }
+
+    case "diff": {
+      diff(rest[0] || ".", rest[1], rest[2]);
+      break;
+    }
+
+    case "plan": {
+      plan(rest[0] || ".");
+      break;
+    }
+
+    case "ask": {
+      const ask_dir = rest[0] || ".";
+      const agent_name = rest[1];
+      const question = rest.slice(2).join(" ");
+      if (!agent_name || !question) {
+        log("usage: joust ask [dir] <agent> <question>");
+        process.exit(1);
+      }
+      await ask(ask_dir, agent_name, question);
+      break;
+    }
+
     case "--help":
     case "-h": {
       print_help();
@@ -95,6 +128,11 @@ function print_help() {
   log("  joust draft <prompt>    bootstrap + run immediately");
   log("  joust run [dir]         start or resume accumulator loop");
   log("  joust tail [dir]        stream agent logs in real-time");
+  log("  joust status [dir]      show current run status");
+  log("  joust export [dir]      output latest draft to stdout");
+  log("  joust diff [dir] [a] [b]  diff between two history steps");
+  log("  joust plan [dir]          estimate token usage and cost");
+  log("  joust ask [dir] <agent> <question>  one-shot query to an agent");
   log("");
   log("flags:");
   log("  --interactive[=N]       pause every N rounds for human feedback");

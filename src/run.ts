@@ -1,15 +1,18 @@
 import { resolve, join } from "path";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { call_agent_structured } from "./ai";
 import { compile_context } from "./context";
 import { resolve_config, get_main_agent, get_jousters } from "./config";
 import { lint_mutation } from "./lint";
+import { maybe_compact } from "./compact";
 import { tank_execute, parse_duration, is_timeboxed_out } from "./tank";
 import {
   read_latest_history,
   next_step_number,
   commit_state,
+  acquire_lock,
+  release_lock,
   log,
   log_status,
   to_json,
@@ -84,6 +87,7 @@ async function human_intermission(snowball: Snowball, round: number): Promise<st
 
 export async function run(dir: string, options: RunOptions = {}): Promise<void> {
   dir = resolve(dir);
+  acquire_lock(dir);
 
   // resume: read latest state
   const latest = read_latest_history(dir);
@@ -105,9 +109,10 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   const timeout_ms = options.timeout ? parse_duration(options.timeout) : null;
   const abort_controller = timeout_ms ? new AbortController() : null;
 
-  if (timeout_ms && abort_controller) {
-    setTimeout(() => abort_controller.abort("hard timeout reached"), timeout_ms);
-  }
+  const controller_to_abort = abort_controller;
+  const timeout_id = (timeout_ms && controller_to_abort)
+    ? setTimeout(() => controller_to_abort.abort("hard timeout reached"), timeout_ms)
+    : null;
 
   // re-read config at round boundary
   let config = resolve_config(dir);
@@ -117,6 +122,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   const max_rounds = config.defaults.max_rounds;
   const interactive_interval = options.interactive ?? 0;
 
+  try {
   for (let round = 1; round <= max_rounds; round++) {
     // check timebox at round boundary
     if (timebox_ms && is_timeboxed_out(start_time, timebox_ms)) {
@@ -147,7 +153,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
       while (!accepted && attempts < max_retries) {
         attempts++;
 
-        const execute_jouster = async () => {
+        const execute_mutation = async () => {
           // compile context for jouster
           const messages = compile_context(jouster, snowball, "jouster");
 
@@ -166,33 +172,37 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
 
           // call the jouster
           const signal = abort_controller?.signal;
-          const mutation = await call_agent_structured(jouster, messages, MutationResultSchema, { signal });
-
-          // log the raw output
-          await append_log(dir, `agent-${jouster.name}.log`, `\n--- step ${step} attempt ${attempts} ---\n${mutation.critique}\n`);
-
-          // lint the mutation
-          const lint = await lint_mutation(main, snowball, mutation.draft);
-
-          return { mutation, lint };
+          return await call_agent_structured(jouster, messages, MutationResultSchema, { signal });
         };
 
         try {
-          let result;
-
+          // mutation and lint are wrapped independently so a transient lint failure
+          // doesn't discard a successful (expensive) mutation
+          let mutation;
           if (options.tank) {
-            result = await tank_execute(jouster.name, execute_jouster);
-            if (!result) {
-              // tank mode: agent totally failed, skip
+            mutation = await tank_execute(jouster.name, execute_mutation);
+            if (!mutation) {
               log_status(jouster.name, "skipped (tank mode: agent unavailable)");
-              await append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} SYSTEM_FAILURE: skipped by tank mode\n`);
+              append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} SYSTEM_FAILURE: skipped by tank mode\n`);
               break;
             }
           } else {
-            result = await execute_jouster();
+            mutation = await execute_mutation();
           }
 
-          const { mutation, lint } = result;
+          append_log(dir, `agent-${jouster.name}.log`, `\n--- step ${step} attempt ${attempts} ---\n${mutation.critique}\n`);
+
+          const execute_lint = async () => lint_mutation(main, snowball, mutation!.draft);
+          let lint;
+          if (options.tank) {
+            lint = await tank_execute("main", execute_lint);
+            if (!lint) {
+              log_status("main", "lint unavailable (tank mode), accepting mutation");
+              lint = { valid: true, violations: [] };
+            }
+          } else {
+            lint = await execute_lint();
+          }
 
           if (lint.valid) {
             // accept the mutation
@@ -218,7 +228,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
               snowball,
             };
 
-            await commit_state(dir, step, jouster.name, entry);
+            commit_state(dir, step, jouster.name, entry);
             step++;
             accepted = true;
 
@@ -237,7 +247,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
               violations: lint.violations,
             };
 
-            await commit_state(dir, step, jouster.name, entry);
+            commit_state(dir, step, jouster.name, entry);
             step++;
 
             log_status(jouster.name, `rejected (attempt ${attempts}/${max_retries})`);
@@ -253,20 +263,67 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
               timestamp: new Date().toISOString(),
               snowball,
             };
-            await commit_state(dir, step, jouster.name, entry);
+            commit_state(dir, step, jouster.name, entry);
             step++;
             break;
           }
 
           log_status(jouster.name, `error: ${err.message}`);
-          await append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} error: ${err.message}\n`);
+          append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} error: ${err.message}\n`);
         }
       }
 
       if (!accepted) {
         log_status(jouster.name, `skipped after ${max_retries} failed attempts`);
-        await append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} exhausted retries, skipping\n`);
+        append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} exhausted retries, skipping\n`);
+
+        // circuit breaker: signal that intervention may be needed
+        if (interactive_interval > 0) {
+          log(`\n--- circuit breaker: ${jouster.name} exhausted retries ---\n`);
+          const feedback = await human_intermission(snowball, round);
+          if (feedback) {
+            snowball = {
+              ...snowball,
+              human_directives: [...snowball.human_directives, feedback],
+            };
+            log(`human directive recorded (${feedback.length} chars)`);
+          }
+        } else {
+          // non-interactive: write marker file
+          const marker_path = join(dir, ".needs-attention");
+          const marker = `${jouster.name} exhausted ${max_retries} retries at step ${step}, round ${round}.\n` +
+            `Last violations: ${last_violations.join("; ")}\n` +
+            `Timestamp: ${new Date().toISOString()}\n`;
+          try { writeFileSync(marker_path, marker); } catch {}
+          log(`[warn] wrote ${marker_path} — ${jouster.name} needs attention`);
+        }
       }
+    }
+
+    // compaction check before polish
+    try {
+      const compaction_threshold = config.defaults.compaction_threshold;
+      const compact_fn = async () => maybe_compact(
+        main, snowball, compaction_threshold, { signal: abort_controller?.signal }
+      );
+      const compacted = options.tank
+        ? await tank_execute("main", compact_fn)
+        : await compact_fn();
+      if (compacted && compacted !== snowball) {
+        snowball = compacted;
+        const entry: HistoryEntry = {
+          step,
+          actor: "main",
+          action: "compact",
+          status: "accepted",
+          timestamp: new Date().toISOString(),
+          snowball,
+        };
+        commit_state(dir, step, "main", entry);
+        step++;
+      }
+    } catch (err: any) {
+      log_status("main", `compaction error: ${err.message}`);
     }
 
     // main polish at end of round
@@ -283,6 +340,16 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
       const polish = options.tank ? await tank_execute("main", polish_fn) : await polish_fn();
 
       if (polish) {
+        // lint the polish pass — warn but don't reject (main is trusted)
+        try {
+          const polish_lint = await lint_mutation(main, snowball, polish.draft);
+          if (!polish_lint.valid) {
+            log_status("main", `[warn] polish violated invariants: ${polish_lint.violations.join("; ")}`);
+          }
+        } catch {
+          // lint failure during polish is non-fatal
+        }
+
         const critique_entry: CritiqueEntry = {
           actor: "main",
           action: "polish",
@@ -305,7 +372,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           snowball,
         };
 
-        await commit_state(dir, step, "main", entry);
+        commit_state(dir, step, "main", entry);
         step++;
 
         log_status("main", "polish complete");
@@ -331,6 +398,24 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
     }
   }
 
+  // run summary to STDERR
+  const elapsed_s = Math.round((Date.now() - start_time) / 1000);
+  const elapsed_str = elapsed_s >= 60
+    ? `${Math.floor(elapsed_s / 60)}m ${elapsed_s % 60}s`
+    : `${elapsed_s}s`;
+  const word_count = snowball.draft.split(/\s+/).length;
+  const trail_count = snowball.critique_trail.length;
+  const must_count = snowball.invariants.MUST.length;
+  const should_count = snowball.invariants.SHOULD.length;
+  const must_not_count = snowball.invariants.MUST_NOT.length;
+  log(`\n=== joust complete ===`);
+  log(`steps: ${step} | invariants: ${must_count} MUST, ${should_count} SHOULD, ${must_not_count} MUST NOT`);
+  log(`draft: ${word_count} words | critiques: ${trail_count} | elapsed: ${elapsed_str}`);
+
   // final output to STDOUT
   process.stdout.write(snowball.draft);
+  } finally {
+    if (timeout_id !== null) clearTimeout(timeout_id);
+    release_lock(dir);
+  }
 }

@@ -1,3 +1,4 @@
+import { ZodError } from "zod";
 import { log_status } from "./utils";
 
 // --- exponential backoff ---
@@ -20,8 +21,15 @@ export function is_server_error(err: any): boolean {
   return status >= 500 && status < 600;
 }
 
+export function is_parse_error(err: any): boolean {
+  if (err instanceof ZodError) return true;
+  // Vercel AI SDK's NoObjectGeneratedError
+  if (err?.name === "NoObjectGeneratedError" || err?.name === "AI_NoObjectGeneratedError") return true;
+  return false;
+}
+
 export function is_transient(err: any): boolean {
-  return is_rate_limit(err) || is_server_error(err);
+  return is_rate_limit(err) || is_server_error(err) || is_parse_error(err);
 }
 
 // --- tank wrapper ---
@@ -54,6 +62,15 @@ export async function tank_execute<T>(
         const wait = backoff_ms(attempts);
         log_status(agent_name, `server error, retrying in ${wait}ms (attempt ${attempts})`);
         await Bun.sleep(wait);
+        continue;
+      }
+
+      if (is_parse_error(err)) {
+        if (attempts >= 2) {
+          log_status(agent_name, `parse error after ${attempts} attempts, skipping`);
+          return null;
+        }
+        log_status(agent_name, `parse error, retrying (attempt ${attempts})`);
         continue;
       }
 

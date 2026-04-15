@@ -1,5 +1,5 @@
-import { watch, existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { join, resolve, basename } from "path";
+import { watch, existsSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "fs";
+import { join, resolve } from "path";
 import { log } from "./utils";
 
 // --- colors ---
@@ -58,12 +58,18 @@ export async function tail(dir: string): Promise<void> {
     const stat = statSync(path);
     const prev_size = sizes[filename] ?? 0;
 
+    if (stat.size < prev_size) {
+      log(`[warn] log file shrank: ${filename} — resetting cursor`);
+      sizes[filename] = stat.size;
+      return;
+    }
+
     if (stat.size > prev_size) {
       // read only the new bytes
-      const fd = require("fs").openSync(path, "r");
+      const fd = openSync(path, "r");
       const buf = Buffer.alloc(stat.size - prev_size);
-      require("fs").readSync(fd, buf, 0, buf.length, prev_size);
-      require("fs").closeSync(fd);
+      readSync(fd, buf, 0, buf.length, prev_size);
+      closeSync(fd);
 
       const new_text = buf.toString("utf-8");
       const color = color_for(filename);

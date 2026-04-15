@@ -1,5 +1,38 @@
-import type { AgentConfig, Snowball } from "./types";
+import { log } from "./utils";
+import type { AgentConfig, AgentRole, Snowball } from "./types";
 import type { Message } from "./ai";
+
+// --- token estimation ---
+// rough heuristic: ~4 chars per token for English text
+
+export function estimate_tokens(messages: Message[]): number {
+  const total_chars = messages.reduce((sum, m) => sum + m.content.length, 0);
+  return Math.ceil(total_chars / 4);
+}
+
+// known context window sizes (input tokens)
+const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  "claude-opus-4-6": 200_000,
+  "claude-sonnet-4-6": 200_000,
+  "claude-haiku-4-5": 200_000,
+  "gemini-2.5-pro": 1_000_000,
+  "gpt-4o": 128_000,
+  "gpt-4-turbo": 128_000,
+  "o1": 200_000,
+};
+
+export function check_context_size(model: string, messages: Message[]): void {
+  const est = estimate_tokens(messages);
+  // find matching limit — prefix match for model families
+  let limit = 200_000; // safe default
+  for (const [prefix, ctx] of Object.entries(MODEL_CONTEXT_LIMITS)) {
+    if (model.startsWith(prefix)) { limit = ctx; break; }
+  }
+  const threshold = limit * 0.85; // warn at 85% capacity
+  if (est > threshold) {
+    log(`[warn] estimated ${est} tokens (~${Math.round(est / limit * 100)}% of ${model} context window). Consider compaction.`);
+  }
+}
 
 // --- format invariants as text block ---
 
@@ -33,13 +66,14 @@ function format_invariants(snowball: Snowball): string {
 // --- compile the "attention sandwich" ---
 //
 // top:    system prompt + invariants (anchors behavior)
-// middle: critique trail as pseudo assistant/user turns (narrative > wall of text)
+// middle: critique trail as batched context (token-efficient)
 // bottom: current draft as final user message (recency bias)
 
 export function compile_context(
   agent: AgentConfig,
   snowball: Snowball,
-  role: "jouster" | "lint" | "bootstrap" | "polish"
+  role: AgentRole,
+  options?: { mutated_draft?: string }
 ): Message[] {
   const messages: Message[] = [];
   const invariant_text = format_invariants(snowball);
@@ -82,6 +116,17 @@ export function compile_context(
         invariant_text,
       ].join("\n"),
     });
+  } else if (role === "compact") {
+    messages.push({
+      role: "system",
+      content: [
+        agent.system,
+        "",
+        "You are compacting the critique trail into a dense summary of resolved decisions.",
+        "Preserve every decision, rationale, and trade-off — compress the text, not the information.",
+        "Output structured JSON: { summary: string }",
+      ].join("\n"),
+    });
   } else {
     // jouster
     messages.push({
@@ -100,18 +145,27 @@ export function compile_context(
     });
   }
 
-  // --- MIDDLE: critique trail as pseudo conversation ---
+  // --- MIDDLE: critique trail as batched context ---
   if (snowball.critique_trail.length > 0 && role !== "bootstrap") {
-    for (const entry of snowball.critique_trail) {
-      messages.push({
-        role: "assistant",
-        content: `[${entry.actor}] ${entry.action}: ${entry.notes}`,
-      });
-      messages.push({
-        role: "user",
-        content: "Acknowledged. Continue.",
-      });
-    }
+    const trail_text = snowball.critique_trail
+      .map((e) => `[${e.actor}] ${e.action}: ${e.notes}`)
+      .join("\n\n");
+    messages.push({
+      role: "user",
+      content: `Previous review history:\n\n${trail_text}`,
+    });
+    messages.push({
+      role: "assistant",
+      content: "Understood. I have reviewed the full critique trail above.",
+    });
+  }
+
+  // resolved decisions from prior compactions
+  if (snowball.resolved_decisions.length > 0 && role !== "bootstrap") {
+    messages.push({
+      role: "user",
+      content: `Resolved decisions from prior rounds:\n\n${snowball.resolved_decisions.join("\n\n")}`,
+    });
   }
 
   // human directives get injected as high-priority user messages
@@ -126,12 +180,14 @@ export function compile_context(
 
   // --- BOTTOM: current draft or prompt ---
   if (role === "bootstrap") {
-    // the draft IS the user's raw prompt at this point
     messages.push({
       role: "user",
       content: snowball.draft,
     });
   } else if (role === "lint") {
+    if (!options?.mutated_draft) {
+      throw new Error("compile_context for 'lint' role requires options.mutated_draft");
+    }
     messages.push({
       role: "user",
       content: [
@@ -142,8 +198,18 @@ export function compile_context(
         "",
         "MUTATED DRAFT (to validate):",
         "---",
-        // the caller will replace this with the actual mutated draft
-        "{{MUTATED_DRAFT}}",
+        options.mutated_draft,
+        "---",
+      ].join("\n"),
+    });
+  } else if (role === "compact") {
+    messages.push({
+      role: "user",
+      content: [
+        "Compact the critique trail above into a dense summary.",
+        "The current draft for reference:",
+        "---",
+        snowball.draft,
         "---",
       ].join("\n"),
     });
@@ -161,15 +227,4 @@ export function compile_context(
   }
 
   return messages;
-}
-
-// --- inject mutated draft into lint context ---
-
-export function inject_lint_draft(messages: Message[], mutated_draft: string): Message[] {
-  return messages.map((m) => {
-    if (m.content.includes("{{MUTATED_DRAFT}}")) {
-      return { ...m, content: m.content.replace("{{MUTATED_DRAFT}}", mutated_draft) };
-    }
-    return m;
-  });
 }
