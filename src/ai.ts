@@ -7,9 +7,22 @@ import type { AgentConfig } from "./types";
 
 // --- provider detection ---
 
+function resolve_api_key(raw_key: string): string {
+  const match = raw_key.match(/^\$(.+)$/);
+  if (match) {
+    const val = process.env[match[1]];
+    if (!val) {
+      throw new Error(`missing environment variable: ${raw_key}`);
+    }
+    return val;
+  }
+  // raw key pasted directly in config — use as-is
+  return raw_key;
+}
+
 function get_model(agent: AgentConfig) {
   const model_id = agent.model;
-  const api_key = agent.api_key;
+  const api_key = resolve_api_key(agent.api_key);
 
   if (model_id.startsWith("claude-") || model_id.startsWith("anthropic/")) {
     const provider = createAnthropic({ apiKey: api_key });

@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { load_config, expand_env_vars } from "./utils";
+import { load_config } from "./utils";
 import type { JoustConfig, AgentConfig, JoustDefaults } from "./types";
 
 // --- built-in defaults ---
@@ -46,7 +46,7 @@ function expand_agent_config(name: string, raw: Record<string, any>, defaults: J
   return {
     name,
     model: raw.model ?? "claude-sonnet-4-6",
-    api_key: expand_env_vars(raw.api_key ?? "$ANTHROPIC_API_KEY"),
+    api_key: raw.api_key ?? "$ANTHROPIC_API_KEY",
     system: raw.system ?? "",
     temperature: raw.temperature ?? defaults.temperature,
   };

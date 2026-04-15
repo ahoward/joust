@@ -48,11 +48,8 @@ export function expand_env_vars(text: string): string {
 }
 
 export function load_config(path: string): unknown {
-  const raw = Bun.file(path);
-  // synchronous read
   const text = require("fs").readFileSync(path, "utf-8");
-  const expanded = expand_env_vars(text);
-  return parse_yaml(expanded);
+  return parse_yaml(text);
 }
 
 // --- history scanning ---
