@@ -61,6 +61,16 @@ every step is saved to an append-only ledger on disk. atomic POSIX writes. you
 can `kill -9` the process mid-stride, restart it, and the snowball picks up
 exactly where it left off.
 
+## install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ahoward/joust/main/install.sh | bash
+```
+
+or pick a binary from the [latest release](https://github.com/ahoward/joust/releases/latest) and drop it in your `$PATH`.
+
+requires `ANTHROPIC_API_KEY` in your environment.
+
 ## quick start
 
 ```bash
@@ -136,8 +146,8 @@ agents:
       strict RFC 2119 invariants across all revisions.
 
   security:
-    model: gemini-2.5-pro
-    api_key: $GEMINI_API_KEY
+    model: claude-sonnet-4-6
+    api_key: $ANTHROPIC_API_KEY
     system: >
       You are a ruthless security auditor. Close every
       hole, but respect the architect's invariants.
@@ -179,7 +189,7 @@ joust run --timebox 1h --tank --interactive=5
 
 ## status
 
-under construction.
+working. ships as a single binary for linux and macOS (x64 + arm64).
 
 ## license
 
