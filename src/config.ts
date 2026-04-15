@@ -10,7 +10,7 @@ const DEFAULT_DEFAULTS: JoustDefaults = {
   temperature: 0.2,
   max_retries: 3,
   compaction_threshold: 10,
-  max_rounds: 3,
+  max_rounds: 1,
 };
 
 const BUILTIN_AGENTS: Record<string, Omit<AgentConfig, "name">> = {
@@ -23,8 +23,8 @@ const BUILTIN_AGENTS: Record<string, Omit<AgentConfig, "name">> = {
       "Protect these invariants across all revisions.",
   },
   security: {
-    model: "gemini-2.5-pro",
-    api_key: "$GEMINI_API_KEY",
+    model: "claude-sonnet-4-6",
+    api_key: "$ANTHROPIC_API_KEY",
     system:
       "You are a ruthless security auditor. " +
       "Mutate the draft to close vulnerabilities, " +
@@ -74,6 +74,8 @@ export function resolve_config(project_dir?: string): JoustConfig {
   }
 
   // layer 3: project config (rfc.yaml)
+  // if project defines agents, it REPLACES the built-in set (not merge).
+  // the user is being explicit about their panel.
   if (project_dir) {
     const project_path = join(project_dir, "rfc.yaml");
     if (existsSync(project_path)) {
@@ -82,7 +84,7 @@ export function resolve_config(project_dir?: string): JoustConfig {
         merged_defaults = { ...merged_defaults, ...project_cfg.defaults };
       }
       if (project_cfg?.agents) {
-        merged_agents = { ...merged_agents, ...project_cfg.agents };
+        merged_agents = project_cfg.agents;
       }
     }
   }
@@ -120,7 +122,7 @@ export function generate_default_config(): string {
     "  temperature: 0.2",
     "  max_retries: 3",
     "  compaction_threshold: 10",
-    "  max_rounds: 3",
+    "  max_rounds: 1",
     "",
     "agents:",
     "  main:",
@@ -132,8 +134,8 @@ export function generate_default_config(): string {
     "      (MUST, SHOULD, MUST NOT). Protect these invariants across all revisions.",
     "",
     "  security:",
-    "    model: gemini-2.5-pro",
-    "    api_key: $GEMINI_API_KEY",
+    "    model: claude-sonnet-4-6",
+    "    api_key: $ANTHROPIC_API_KEY",
     "    system: >",
     "      You are a ruthless security auditor. Mutate the draft to close",
     "      vulnerabilities, but you MUST respect the invariants.",

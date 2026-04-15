@@ -59,6 +59,7 @@ export async function call_agent(
     })),
     temperature: agent.temperature ?? 0.2,
     abortSignal: options?.signal,
+    maxRetries: 0,
   });
 
   return result.text;
@@ -87,6 +88,7 @@ export async function call_agent_structured<T>(
     })),
     temperature: agent.temperature ?? 0.2,
     abortSignal: options?.signal,
+    maxRetries: 0,
   });
 
   return result.object;

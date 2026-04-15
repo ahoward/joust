@@ -123,8 +123,8 @@ agents:
     system: >
       You are the lead architect. Define and enforce strict RFC 2119 invariants.
   security:
-    model: gemini-2.5-pro
-    api_key: $GEMINI_API_KEY
+    model: claude-sonnet-4-6
+    api_key: $ANTHROPIC_API_KEY
     system: >
       You are a security auditor. Find vulnerabilities.
 YAML
