@@ -1,0 +1,28 @@
+{
+  "name": "joust",
+  "type": "module",
+  "private": true,
+  "main": "src/cli.ts",
+  "bin": {
+    "joust": "src/cli.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "build": "bun build ./src/cli.ts --compile --outfile joust",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.69",
+    "@ai-sdk/google": "^3.0.63",
+    "@ai-sdk/openai": "^3.0.53",
+    "ai": "^6.0.160",
+    "yaml": "^2.8.3",
+    "zod": "^4.3.6"
+  }
+}
