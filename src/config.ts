@@ -1,7 +1,8 @@
 import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { load_config } from "./utils";
+import { load_config, redact, to_json } from "./utils";
+import { JoustError } from "./errors";
 import type { JoustConfig, AgentConfig, JoustDefaults } from "./types";
 
 // --- built-in defaults ---
@@ -47,9 +48,9 @@ function expand_agent_config(name: string, raw: Record<string, any>, defaults: J
 
   // api_key must be an env var reference — never a literal key
   if (!raw_key.startsWith("$")) {
-    throw new Error(
+    throw new JoustError(
       `agent '${name}' api_key must be an env var reference like $ANTHROPIC_API_KEY, got literal string. ` +
-      `Never put raw API keys in config files.`
+      `Never put raw API keys in config files. (config: ${to_json(redact(raw as Record<string, unknown>))})`
     );
   }
 
@@ -113,7 +114,7 @@ export function resolve_config(project_dir?: string): JoustConfig {
 export function get_main_agent(config: JoustConfig): AgentConfig {
   const main = config.agents["main"];
   if (!main) {
-    throw new Error("config must define a 'main' agent");
+    throw new JoustError("config must define a 'main' agent");
   }
   return main;
 }

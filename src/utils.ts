@@ -214,6 +214,23 @@ export function scrub_keys(text: string): string {
   return KEY_PATTERNS.reduce((t, pat) => t.replace(pat, "[REDACTED]"), text);
 }
 
+// --- object-level redaction (complements scrub_keys for config serialization) ---
+
+const SENSITIVE_KEYS = new Set([
+  "api_key", "apiKey", "apikey",
+  "token", "secret", "password",
+  "authorization", "Authorization",
+]);
+
+export function redact(obj: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [
+      k,
+      SENSITIVE_KEYS.has(k) ? "[REDACTED]" : v,
+    ])
+  );
+}
+
 // --- stderr helpers ---
 
 export function log(msg: string): void {

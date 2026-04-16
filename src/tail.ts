@@ -1,6 +1,7 @@
 import { watch, existsSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "fs";
 import { join, resolve } from "path";
 import { log } from "./utils";
+import { JoustUserError } from "./errors";
 
 // --- colors ---
 
@@ -32,8 +33,7 @@ export async function tail(dir: string): Promise<void> {
   const logs_dir = join(dir, "logs");
 
   if (!existsSync(logs_dir)) {
-    log(`no logs directory found at ${logs_dir}`);
-    process.exit(1);
+    throw new JoustUserError(`no logs directory found at ${logs_dir}`);
   }
 
   log(`tailing ${logs_dir}/\n`);

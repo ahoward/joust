@@ -4,6 +4,7 @@ import { scan_history, read_latest_history, log } from "./utils";
 import { compile_context, estimate_tokens } from "./context";
 import { call_agent } from "./ai";
 import { resolve_config, get_main_agent, get_jousters } from "./config";
+import { JoustUserError } from "./errors";
 import type { HistoryEntry } from "./types";
 
 // --- joust status ---
@@ -46,8 +47,7 @@ export function export_draft(dir: string): void {
   const latest = read_latest_history(dir);
 
   if (!latest) {
-    log("no history found — run 'joust init' first");
-    process.exit(1);
+    throw new JoustUserError("no history found — run 'joust init' first");
   }
 
   process.stdout.write(latest.snowball.draft);
@@ -210,14 +210,12 @@ export async function ask(dir: string, agent_name: string, question: string): Pr
   const agent = all_agents[agent_name];
 
   if (!agent) {
-    log(`agent '${agent_name}' not found. available: ${Object.keys(all_agents).join(", ")}`);
-    process.exit(1);
+    throw new JoustUserError(`agent '${agent_name}' not found. available: ${Object.keys(all_agents).join(", ")}`);
   }
 
   const latest = read_latest_history(dir);
   if (!latest) {
-    log("no history found — run 'joust init' first");
-    process.exit(1);
+    throw new JoustUserError("no history found — run 'joust init' first");
   }
 
   const snowball = latest.snowball;

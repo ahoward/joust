@@ -1,5 +1,5 @@
 import { resolve, join } from "path";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { call_agent_structured } from "./ai";
 import { compile_context } from "./context";
@@ -24,6 +24,21 @@ import {
   type HistoryEntry,
   type CritiqueEntry,
 } from "./types";
+
+// --- orphan .tmp cleanup ---
+
+function cleanup_tmp_files(dir: string): void {
+  const dirs_to_clean = [dir, join(dir, "history")];
+  for (const d of dirs_to_clean) {
+    try {
+      for (const f of readdirSync(d)) {
+        if (f.endsWith(".tmp")) {
+          try { unlinkSync(join(d, f)); } catch {}
+        }
+      }
+    } catch {}
+  }
+}
 
 // --- options ---
 
@@ -107,12 +122,27 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   const start_time = Date.now();
   const timebox_ms = options.timebox ? parse_duration(options.timebox) : null;
   const timeout_ms = options.timeout ? parse_duration(options.timeout) : null;
-  const abort_controller = timeout_ms ? new AbortController() : null;
+  // always create an abort controller — signals need it even without --timeout
+  const abort_controller = new AbortController();
 
-  const controller_to_abort = abort_controller;
-  const timeout_id = (timeout_ms && controller_to_abort)
-    ? setTimeout(() => controller_to_abort.abort("hard timeout reached"), timeout_ms)
+  const timeout_id = timeout_ms
+    ? setTimeout(() => abort_controller.abort("hard timeout reached"), timeout_ms)
     : null;
+
+  // signal handling: wire SIGINT/SIGTERM to abort + cleanup
+  let signal_received = false;
+  const signal_handler = (sig: string) => {
+    if (signal_received) {
+      // second signal = force exit
+      log(`\n${sig} received again, forcing exit`);
+      process.exit(128 + (sig === "SIGINT" ? 2 : 15));
+    }
+    signal_received = true;
+    log(`\n${sig} received, shutting down gracefully...`);
+    abort_controller.abort(`${sig} received`);
+  };
+  process.on("SIGINT", () => signal_handler("SIGINT"));
+  process.on("SIGTERM", () => signal_handler("SIGTERM"));
 
   // re-read config at round boundary
   let config = resolve_config(dir);
@@ -124,6 +154,12 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
 
   try {
   for (let round = 1; round <= max_rounds; round++) {
+    // check signal at round boundary
+    if (signal_received) {
+      log(`\nexiting after signal`);
+      break;
+    }
+
     // check timebox at round boundary
     if (timebox_ms && is_timeboxed_out(start_time, timebox_ms)) {
       log(`\ntimebox reached after ${Math.round((Date.now() - start_time) / 1000)}s`);
@@ -171,7 +207,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           }
 
           // call the jouster
-          const signal = abort_controller?.signal;
+          const signal = abort_controller.signal;
           return await call_agent_structured(jouster, messages, MutationResultSchema, { signal });
         };
 
@@ -304,7 +340,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
     try {
       const compaction_threshold = config.defaults.compaction_threshold;
       const compact_fn = async () => maybe_compact(
-        main, snowball, compaction_threshold, { signal: abort_controller?.signal }
+        main, snowball, compaction_threshold, { signal: abort_controller.signal }
       );
       const compacted = options.tank
         ? await tank_execute("main", compact_fn)
@@ -333,7 +369,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
       const polish_fn = async () => {
         const polish_messages = compile_context(main, snowball, "polish");
         return await call_agent_structured(main, polish_messages, MutationResultSchema, {
-          signal: abort_controller?.signal,
+          signal: abort_controller.signal,
         });
       };
 
@@ -416,6 +452,9 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   process.stdout.write(snowball.draft);
   } finally {
     if (timeout_id !== null) clearTimeout(timeout_id);
+    process.removeAllListeners("SIGINT");
+    process.removeAllListeners("SIGTERM");
+    cleanup_tmp_files(dir);
     release_lock(dir);
   }
 }

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { slugify, expand_env_vars, scrub_keys, to_json } from "../src/utils";
+import { slugify, expand_env_vars, scrub_keys, to_json, redact } from "../src/utils";
 
 describe("slugify", () => {
   test("basic conversion", () => {
@@ -84,5 +84,50 @@ describe("to_json", () => {
     const result = to_json({ a: 1 });
     expect(result).toContain("\n");
     expect(result).toContain("  ");
+  });
+});
+
+describe("redact", () => {
+  test("replaces sensitive keys with [REDACTED]", () => {
+    const input = { api_key: "sk-live-abc123", name: "test" };
+    const output = redact(input);
+    expect(output.api_key).toBe("[REDACTED]");
+    expect(output.name).toBe("test");
+  });
+
+  test("handles all key variants", () => {
+    const input: Record<string, unknown> = {
+      api_key: "x", apiKey: "y", apikey: "z",
+      token: "t", secret: "s", password: "p",
+      authorization: "a", Authorization: "A",
+    };
+    const output = redact(input);
+    for (const k of Object.keys(input)) {
+      expect(output[k]).toBe("[REDACTED]");
+    }
+  });
+
+  test("passes through objects with no sensitive keys", () => {
+    const input = { host: "localhost", port: 3000 };
+    const output = redact(input as Record<string, unknown>);
+    expect(output).toEqual(input);
+  });
+
+  test("returns a new object (does not mutate input)", () => {
+    const input = { api_key: "sk-live-abc123", name: "test" };
+    const output = redact(input);
+    expect(output).not.toBe(input);
+    expect(input.api_key).toBe("sk-live-abc123");
+  });
+
+  test("handles empty object", () => {
+    expect(redact({})).toEqual({});
+  });
+
+  test("does not redact substring matches", () => {
+    const input: Record<string, unknown> = { key: "value", tokenizer: "bert" };
+    const output = redact(input);
+    expect(output.key).toBe("value");
+    expect(output.tokenizer).toBe("bert");
   });
 });

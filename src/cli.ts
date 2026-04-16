@@ -5,6 +5,7 @@ import { run, type RunOptions } from "./run";
 import { tail } from "./tail";
 import { status, export_draft, diff, plan, ask } from "./commands";
 import { log } from "./utils";
+import { JoustError, JoustUserError } from "./errors";
 
 // --- arg parsing ---
 
@@ -99,8 +100,7 @@ async function main() {
       const agent_name = rest[1];
       const question = rest.slice(2).join(" ");
       if (!agent_name || !question) {
-        log("usage: joust ask [dir] <agent> <question>");
-        process.exit(1);
+        throw new JoustUserError("usage: joust ask [dir] <agent> <question>");
       }
       await ask(ask_dir, agent_name, question);
       break;
@@ -113,9 +113,7 @@ async function main() {
     }
 
     default: {
-      log(`unknown command: ${command}`);
-      log("run 'joust --help' for usage");
-      process.exit(1);
+      throw new JoustUserError(`unknown command: ${command}\nrun 'joust --help' for usage`);
     }
   }
 }
@@ -147,7 +145,23 @@ function print_help() {
   log("  joust run ./my-project/ --interactive=3");
 }
 
+process.on("unhandledRejection", (err) => {
+  log(`fatal: unhandled rejection: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(70); // EX_SOFTWARE
+});
+
 main().catch((err) => {
-  log(`fatal: ${err.message}`);
+  // order is load-bearing: JoustUserError extends JoustError,
+  // so the subclass check MUST come first (instanceof walks prototype chain)
+  if (err instanceof JoustUserError) {
+    log(err.message);
+    process.exit(err.exit_code);
+  }
+  if (err instanceof JoustError) {
+    log(`fatal: ${err.message}`);
+    process.exit(err.exit_code);
+  }
+  // unknown errors: full detail for bug reports
+  log(`fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
   process.exit(1);
 });
