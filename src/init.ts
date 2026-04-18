@@ -68,7 +68,7 @@ function read_prompt(input: string): string {
 
 // --- bootstrap ---
 
-export async function init(args: string[], options: { run_after?: boolean } = {}): Promise<string> {
+export async function init(args: string[]): Promise<string> {
   // get the prompt
   let prompt: string;
   if (args.length === 0) {

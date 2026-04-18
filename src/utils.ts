@@ -57,17 +57,7 @@ export function ensure_dir(path: string): void {
   }
 }
 
-// --- config loader with env var expansion ---
-
-export function expand_env_vars(text: string): string {
-  return text.replace(/\$([A-Z0-9_]+)/g, (_match, name) => {
-    const val = process.env[name];
-    if (val === undefined) {
-      throw new Error(`missing environment variable: $${name}`);
-    }
-    return val;
-  });
-}
+// --- config loader ---
 
 export function load_config(path: string): unknown {
   const text = readFileSync(path, "utf-8");

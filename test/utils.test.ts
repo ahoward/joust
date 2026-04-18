@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { slugify, expand_env_vars, scrub_keys, to_json, redact } from "../src/utils";
+import { slugify, scrub_keys, to_json, redact } from "../src/utils";
 
 describe("slugify", () => {
   test("basic conversion", () => {
@@ -21,26 +21,6 @@ describe("slugify", () => {
 
   test("handles empty string", () => {
     expect(slugify("")).toBe("");
-  });
-});
-
-describe("expand_env_vars", () => {
-  test("expands known env vars", () => {
-    process.env.TEST_JOUST_VAR = "hello";
-    expect(expand_env_vars("$TEST_JOUST_VAR")).toBe("hello");
-    delete process.env.TEST_JOUST_VAR;
-  });
-
-  test("throws on missing env var", () => {
-    expect(() => expand_env_vars("$NONEXISTENT_JOUST_VAR_XYZ")).toThrow("missing environment variable");
-  });
-
-  test("expands multiple vars", () => {
-    process.env.TEST_A = "foo";
-    process.env.TEST_B = "bar";
-    expect(expand_env_vars("$TEST_A and $TEST_B")).toBe("foo and bar");
-    delete process.env.TEST_A;
-    delete process.env.TEST_B;
   });
 });
 

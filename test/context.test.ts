@@ -106,4 +106,34 @@ describe("compile_context", () => {
     expect(decision_msg).toBeDefined();
     expect(decision_msg!.content).toContain("Redis for caching");
   });
+
+  test("resolved decisions get assistant acknowledgment (no consecutive user msgs)", () => {
+    const s: Snowball = {
+      ...mock_snowball,
+      resolved_decisions: ["decided to use Redis for caching"],
+    };
+    const messages = compile_context(mock_agent, s, "jouster");
+    const decision_idx = messages.findIndex((m) => m.content.includes("Resolved decisions"));
+    expect(decision_idx).toBeGreaterThan(-1);
+    expect(messages[decision_idx + 1].role).toBe("assistant");
+    expect(messages[decision_idx + 1].content).toContain("resolved decisions");
+  });
+
+  test("ask role includes draft in context (not just question)", () => {
+    const messages = compile_context(mock_agent, mock_snowball, "ask");
+    const system_msg = messages[0].content;
+    expect(system_msg).toContain("answering a question");
+    expect(system_msg).toContain("INVARIANTS:");
+    expect(system_msg).toContain("handle 100k qps");
+    // draft should be present in messages (the last user message)
+    const last = messages[messages.length - 1].content;
+    expect(last).toContain("# Test Draft");
+  });
+
+  test("ask role includes critique trail", () => {
+    const messages = compile_context(mock_agent, mock_snowball, "ask");
+    const trail_msg = messages.find((m) => m.content.includes("Previous review history"));
+    expect(trail_msg).toBeDefined();
+    expect(trail_msg!.content).toContain("[security] mutated_draft: added mTLS");
+  });
 });

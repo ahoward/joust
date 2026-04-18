@@ -58,7 +58,7 @@ async function main() {
 
     case "draft": {
       // bootstrap + immediately run
-      const dir = await init(rest, { run_after: true });
+      const dir = await init(rest);
       await run(dir, options);
       break;
     }

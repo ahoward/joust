@@ -127,6 +127,20 @@ export function compile_context(
         "Output structured JSON: { summary: string }",
       ].join("\n"),
     });
+  } else if (role === "ask") {
+    messages.push({
+      role: "system",
+      content: [
+        agent.system,
+        "",
+        "You are answering a question about an architecture draft.",
+        "You have access to the full draft, invariants, and critique history below.",
+        "Answer the user's question directly. Be specific — cite details from the draft.",
+        "",
+        "INVARIANTS:",
+        invariant_text,
+      ].join("\n"),
+    });
   } else {
     // jouster
     messages.push({
@@ -165,6 +179,10 @@ export function compile_context(
     messages.push({
       role: "user",
       content: `Resolved decisions from prior rounds:\n\n${snowball.resolved_decisions.join("\n\n")}`,
+    });
+    messages.push({
+      role: "assistant",
+      content: "Understood. I have reviewed the resolved decisions above.",
     });
   }
 

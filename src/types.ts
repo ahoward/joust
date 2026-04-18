@@ -138,4 +138,4 @@ export type CompactionResult = z.infer<typeof CompactionResultSchema>;
 
 // --- agent role ---
 
-export type AgentRole = "jouster" | "lint" | "bootstrap" | "polish" | "compact";
+export type AgentRole = "jouster" | "lint" | "bootstrap" | "polish" | "compact" | "ask";

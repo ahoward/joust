@@ -59,8 +59,8 @@ export function diff(dir: string, step1?: string, step2?: string): void {
   dir = resolve(dir);
   const files = scan_history(dir);
 
-  if (files.length < 2 && !step1) {
-    log("need at least 2 history entries for diff");
+  if (files.length < 2 && !(step1 && step2)) {
+    log("need at least 2 history entries for diff (or specify two step numbers)");
     return;
   }
 
@@ -219,13 +219,13 @@ export async function ask(dir: string, agent_name: string, question: string): Pr
   }
 
   const snowball = latest.snowball;
-  const messages = compile_context(agent, snowball, "jouster");
+  const messages = compile_context(agent, snowball, "ask");
 
-  // replace the last message (draft prompt) with the user's question
-  messages[messages.length - 1] = {
+  // append the user's question after the draft context
+  messages.push({
     role: "user",
     content: question,
-  };
+  });
 
   const response = await call_agent(agent, messages);
   process.stdout.write(response);
