@@ -2,17 +2,25 @@ import { call_agent_structured } from "./ai";
 import { compile_context } from "./context";
 import { log_status } from "./utils";
 import { LintResultSchema, type AgentConfig, type LintResult, type Snowball } from "./types";
+import type { ToolSet } from "ai";
 
 export async function lint_mutation(
   main_agent: AgentConfig,
   snowball: Snowball,
-  mutated_draft: string
+  mutated_draft: string,
+  options?: { tools?: ToolSet; max_tool_steps?: number }
 ): Promise<LintResult> {
   log_status("main", "linting mutation against invariants...");
 
-  const messages = compile_context(main_agent, snowball, "lint", { mutated_draft });
+  const messages = compile_context(main_agent, snowball, "lint", {
+    mutated_draft,
+    has_tools: !!options?.tools,
+  });
 
-  const result = await call_agent_structured(main_agent, messages, LintResultSchema);
+  const result = await call_agent_structured(main_agent, messages, LintResultSchema, {
+    tools: options?.tools,
+    max_tool_steps: options?.max_tool_steps,
+  });
 
   // MUST violations are hard failures
   if (!result.valid) {

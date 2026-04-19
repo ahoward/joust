@@ -250,7 +250,10 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
 
           append_log(dir, `agent-${jouster.name}.log`, `\n--- step ${step} attempt ${attempts} ---\n${mutation.critique}\n`);
 
-          const execute_lint = async () => lint_mutation(main, snowball, mutation!.draft);
+          const execute_lint = async () => lint_mutation(main, snowball, mutation!.draft, {
+            tools: workspace_tools,
+            max_tool_steps,
+          });
           let lint;
           if (options.tank) {
             lint = await tank_execute("main", execute_lint);
@@ -362,7 +365,11 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
     try {
       const compaction_threshold = config.defaults.compaction_threshold;
       const compact_fn = async () => maybe_compact(
-        main, snowball, compaction_threshold, { signal: abort_controller.signal }
+        main, snowball, compaction_threshold, {
+          signal: abort_controller.signal,
+          tools: workspace_tools,
+          max_tool_steps,
+        }
       );
       const compacted = options.tank
         ? await tank_execute("main", compact_fn)
@@ -404,7 +411,10 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
       if (polish) {
         // lint the polish pass — warn but don't reject (main is trusted)
         try {
-          const polish_lint = await lint_mutation(main, snowball, polish.draft);
+          const polish_lint = await lint_mutation(main, snowball, polish.draft, {
+            tools: workspace_tools,
+            max_tool_steps,
+          });
           if (!polish_lint.valid) {
             log_status("main", `[warn] polish violated invariants: ${polish_lint.violations.join("; ")}`);
           }

@@ -91,17 +91,22 @@ export function compile_context(
       ].join("\n"),
     });
   } else if (role === "lint") {
-    messages.push({
-      role: "system",
-      content: [
-        "You are the lead architect reviewing a jouster's mutation.",
-        "Check the mutated draft against the following invariants.",
-        "Output structured JSON: { valid: boolean, violations: string[] }",
+    const lint_lines = [
+      "You are the lead architect reviewing a jouster's mutation.",
+      "Check the mutated draft against the following invariants.",
+      "Output structured JSON: { valid: boolean, violations: string[] }",
+      "",
+      "INVARIANTS:",
+      invariant_text,
+    ];
+    if (options?.has_tools) {
+      lint_lines.push(
         "",
-        "INVARIANTS:",
-        invariant_text,
-      ].join("\n"),
-    });
+        "You have tools to read files from the project workspace. Use them to verify",
+        "that file paths, line numbers, and code references in the draft are accurate.",
+      );
+    }
+    messages.push({ role: "system", content: lint_lines.join("\n") });
   } else if (role === "polish") {
     const polish_lines = [
       agent.system,
@@ -122,16 +127,21 @@ export function compile_context(
     }
     messages.push({ role: "system", content: polish_lines.join("\n") });
   } else if (role === "compact") {
-    messages.push({
-      role: "system",
-      content: [
-        agent.system,
+    const compact_lines = [
+      agent.system,
+      "",
+      "You are compacting the critique trail into a dense summary of resolved decisions.",
+      "Preserve every decision, rationale, and trade-off — compress the text, not the information.",
+      "Output structured JSON: { summary: string }",
+    ];
+    if (options?.has_tools) {
+      compact_lines.push(
         "",
-        "You are compacting the critique trail into a dense summary of resolved decisions.",
-        "Preserve every decision, rationale, and trade-off — compress the text, not the information.",
-        "Output structured JSON: { summary: string }",
-      ].join("\n"),
-    });
+        "You have tools to read files from the project workspace. Use them to verify",
+        "that references in the critique trail are accurate before compacting.",
+      );
+    }
+    messages.push({ role: "system", content: compact_lines.join("\n") });
   } else if (role === "ask") {
     const ask_lines = [
       agent.system,

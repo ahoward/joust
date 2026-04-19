@@ -6,12 +6,13 @@ import {
   type AgentConfig,
   type Snowball,
 } from "./types";
+import type { ToolSet } from "ai";
 
 export async function maybe_compact(
   main: AgentConfig,
   snowball: Snowball,
   threshold: number,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; tools?: ToolSet; max_tool_steps?: number }
 ): Promise<Snowball> {
   if (snowball.critique_trail.length < threshold) return snowball;
 
@@ -20,6 +21,8 @@ export async function maybe_compact(
   const messages = compile_context(main, snowball, "compact");
   const result = await call_agent_structured(main, messages, CompactionResultSchema, {
     signal: options?.signal,
+    tools: options?.tools,
+    max_tool_steps: options?.max_tool_steps,
   });
 
   log_status("main", "compaction complete");
