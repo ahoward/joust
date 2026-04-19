@@ -1,7 +1,7 @@
 node_modules/
 bun.lock
 *.tmp
-joust
+/joust
 
 .envrc
 .playwright-mcp/
