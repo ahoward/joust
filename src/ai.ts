@@ -88,7 +88,7 @@ export async function call_agent(
       })),
       temperature: agent.temperature ?? 0.2,
       abortSignal: options?.signal,
-      maxRetries: 0,
+      maxRetries: 3,
       ...(options?.tools && {
         tools: options.tools,
         stopWhen: [isLoopFinished()],
@@ -136,7 +136,7 @@ export async function call_agent_structured<T>(
         messages: formatted,
         temperature: agent.temperature ?? 0.2,
         abortSignal: options?.signal,
-        maxRetries: 0,
+        maxRetries: 3,
         tools: options.tools,
         stopWhen: [isLoopFinished()],
       });
@@ -176,7 +176,7 @@ export async function call_agent_structured<T>(
         messages: phase2_messages,
         temperature: agent.temperature ?? 0.2,
         abortSignal: options?.signal,
-        maxRetries: 0,
+        maxRetries: 3,
       });
 
       return result.object;
@@ -190,7 +190,7 @@ export async function call_agent_structured<T>(
       messages: formatted,
       temperature: agent.temperature ?? 0.2,
       abortSignal: options?.signal,
-      maxRetries: 0,
+      maxRetries: 3,
     });
 
     return result.object;

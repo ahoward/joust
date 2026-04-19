@@ -317,8 +317,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             log_status(jouster.name, `rejected (attempt ${attempts}/${max_retries})`);
           }
         } catch (err: any) {
-          if (err.name === "AbortError") {
-            log_status(jouster.name, "aborted by hard timeout");
+          if (err.name === "AbortError" || signal_received) {
+            log_status(jouster.name, signal_received ? "aborted by signal" : "aborted by timeout");
             const entry: HistoryEntry = {
               step,
               actor: jouster.name,
@@ -332,8 +332,9 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             break;
           }
 
-          log_status(jouster.name, `error: ${err.message}`);
-          append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} error: ${err.message}\n`);
+          const err_detail = err.message || err.cause?.message || String(err);
+          log_status(jouster.name, `error: ${err_detail}`);
+          append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} error: ${err_detail}\n`);
         }
       }
 
@@ -483,12 +484,19 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   const must_count = snowball.invariants.MUST.length;
   const should_count = snowball.invariants.SHOULD.length;
   const must_not_count = snowball.invariants.MUST_NOT.length;
-  log(`\n=== joust complete ===`);
-  log(`steps: ${step} | invariants: ${must_count} MUST, ${should_count} SHOULD, ${must_not_count} MUST NOT`);
-  log(`draft: ${word_count} words | critiques: ${trail_count} | elapsed: ${elapsed_str}`);
 
-  // final output to STDOUT (teed to stdout.log)
-  write_stdout(snowball.draft);
+  if (signal_received) {
+    log(`\n=== joust interrupted ===`);
+    log(`steps: ${step} | elapsed: ${elapsed_str}`);
+    log(`state saved. resume with: joust /run ${dir}/`);
+  } else {
+    log(`\n=== joust complete ===`);
+    log(`steps: ${step} | invariants: ${must_count} MUST, ${should_count} SHOULD, ${must_not_count} MUST NOT`);
+    log(`draft: ${word_count} words | critiques: ${trail_count} | elapsed: ${elapsed_str}`);
+
+    // final output to STDOUT (teed to stdout.log)
+    write_stdout(snowball.draft);
+  }
   } finally {
     if (timeout_id !== null) clearTimeout(timeout_id);
     process.removeAllListeners("SIGINT");
