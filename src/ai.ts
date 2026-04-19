@@ -1,4 +1,4 @@
-import { generateText, Output, isLoopFinished, stepCountIs } from "ai";
+import { generateText, generateObject, isLoopFinished, stepCountIs } from "ai";
 import type { ToolSet } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -102,6 +102,12 @@ export async function call_agent(
 }
 
 // --- structured output ---
+//
+// two-phase approach when tools are involved:
+//   phase 1: generateText with tools — agent reads files, builds analysis as free text
+//   phase 2: generateObject — parse the analysis into structured output
+//
+// without tools: single-phase generateObject (reliable, native JSON mode)
 
 export async function call_agent_structured<T>(
   agent: AgentConfig,
@@ -114,27 +120,60 @@ export async function call_agent_structured<T>(
 
   const system_msgs = messages.filter((m) => m.role === "system");
   const non_system = messages.filter((m) => m.role !== "system");
+  const system = system_msgs.map((m) => m.content).join("\n\n");
+  const formatted = non_system.map((m) => ({
+    role: m.role as "user" | "assistant",
+    content: m.content,
+  }));
 
   const stop_progress = start_progress_timer(`[${agent.name}]`);
   try {
-    const result = await generateText({
+    if (options?.tools) {
+      // phase 1: tool use — let the agent read files and think freely
+      const research = await generateText({
+        model,
+        system,
+        messages: formatted,
+        temperature: agent.temperature ?? 0.2,
+        abortSignal: options?.signal,
+        maxRetries: 0,
+        tools: options.tools,
+        stopWhen: [isLoopFinished(), stepCountIs(options.max_tool_steps ?? 10)],
+      });
+
+      // phase 2: structured extraction — feed the research back and demand JSON
+      const result = await generateObject({
+        model,
+        schema,
+        system,
+        messages: [
+          ...formatted,
+          { role: "assistant" as const, content: research.text },
+          {
+            role: "user" as const,
+            content: "Now produce your final output as structured JSON matching the required schema. Incorporate all findings from your analysis above.",
+          },
+        ],
+        temperature: agent.temperature ?? 0.2,
+        abortSignal: options?.signal,
+        maxRetries: 0,
+      });
+
+      return result.object;
+    }
+
+    // no tools: single-phase generateObject (reliable native JSON mode)
+    const result = await generateObject({
       model,
-      output: Output.object({ schema }),
-      system: system_msgs.map((m) => m.content).join("\n\n"),
-      messages: non_system.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      })),
+      schema,
+      system,
+      messages: formatted,
       temperature: agent.temperature ?? 0.2,
       abortSignal: options?.signal,
       maxRetries: 0,
-      ...(options?.tools && {
-        tools: options.tools,
-        stopWhen: [isLoopFinished(), stepCountIs(options.max_tool_steps ?? 10)],
-      }),
     });
 
-    return result.output as T;
+    return result.object;
   } finally {
     stop_progress();
   }
