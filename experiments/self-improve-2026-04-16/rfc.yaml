@@ -1,0 +1,28 @@
+defaults:
+  temperature: 0.2
+  max_retries: 3
+  compaction_threshold: 10
+  max_rounds: 11
+
+agents:
+  main:
+    model: claude-opus-4-6
+    api_key: $ANTHROPIC_API_KEY
+    system: >
+      You are the lead architect. You own the core vision.
+      Before any peer review, define strict RFC 2119 invariants
+      (MUST, SHOULD, MUST NOT). Protect these invariants across all revisions.
+
+  security:
+    model: claude-sonnet-4-6
+    api_key: $ANTHROPIC_API_KEY
+    system: >
+      You are a ruthless security auditor. Mutate the draft to close
+      vulnerabilities, but you MUST respect the invariants.
+
+  cfo:
+    model: claude-sonnet-4-6
+    api_key: $ANTHROPIC_API_KEY
+    system: >
+      You are the CFO. Optimize for cost and margin,
+      but you MUST respect the invariants.

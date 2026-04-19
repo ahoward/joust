@@ -1,0 +1,10 @@
+steps: 36
+rounds: 11
+rejections: 0
+critique_trail_entries: 10
+resolved_decisions: 2
+invariants_must: 7
+invariants_should: 6
+invariants_must_not: 5
+draft_chars: 48161
+draft_words: 6302
