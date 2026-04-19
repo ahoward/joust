@@ -73,7 +73,7 @@ export function compile_context(
   agent: AgentConfig,
   snowball: Snowball,
   role: AgentRole,
-  options?: { mutated_draft?: string }
+  options?: { mutated_draft?: string; has_tools?: boolean }
 ): Message[] {
   const messages: Message[] = [];
   const invariant_text = format_invariants(snowball);
@@ -103,19 +103,24 @@ export function compile_context(
       ].join("\n"),
     });
   } else if (role === "polish") {
-    messages.push({
-      role: "system",
-      content: [
-        agent.system,
+    const polish_lines = [
+      agent.system,
+      "",
+      "You are doing a final polish pass on the draft after all jousters have contributed.",
+      "Improve clarity, fix inconsistencies, and ensure the draft is cohesive.",
+      "Respect the invariants. Output structured JSON: { draft, critique }",
+      "",
+      "INVARIANTS:",
+      invariant_text,
+    ];
+    if (options?.has_tools) {
+      polish_lines.push(
         "",
-        "You are doing a final polish pass on the draft after all jousters have contributed.",
-        "Improve clarity, fix inconsistencies, and ensure the draft is cohesive.",
-        "Respect the invariants. Output structured JSON: { draft, critique }",
-        "",
-        "INVARIANTS:",
-        invariant_text,
-      ].join("\n"),
-    });
+        "You have tools to read files from the project workspace. Use them to verify",
+        "claims in the draft against actual code.",
+      );
+    }
+    messages.push({ role: "system", content: polish_lines.join("\n") });
   } else if (role === "compact") {
     messages.push({
       role: "system",
@@ -128,35 +133,47 @@ export function compile_context(
       ].join("\n"),
     });
   } else if (role === "ask") {
-    messages.push({
-      role: "system",
-      content: [
-        agent.system,
+    const ask_lines = [
+      agent.system,
+      "",
+      "You are answering a question about an architecture draft.",
+      "You have access to the full draft, invariants, and critique history below.",
+      "Answer the user's question directly. Be specific — cite details from the draft.",
+      "",
+      "INVARIANTS:",
+      invariant_text,
+    ];
+    if (options?.has_tools) {
+      ask_lines.push(
         "",
-        "You are answering a question about an architecture draft.",
-        "You have access to the full draft, invariants, and critique history below.",
-        "Answer the user's question directly. Be specific — cite details from the draft.",
-        "",
-        "INVARIANTS:",
-        invariant_text,
-      ].join("\n"),
-    });
+        "You have tools to read files from the project workspace. Use them to ground your answers",
+        "in actual code. Do not guess at file contents — read them.",
+      );
+    }
+    messages.push({ role: "system", content: ask_lines.join("\n") });
   } else {
     // jouster
-    messages.push({
-      role: "system",
-      content: [
-        agent.system,
+    const jouster_lines = [
+      agent.system,
+      "",
+      "You are reviewing and mutating an architecture draft.",
+      "You MUST respect the following invariants. If you violate them, your mutation will be rejected.",
+      "",
+      "INVARIANTS:",
+      invariant_text,
+      "",
+    ];
+    if (options?.has_tools) {
+      jouster_lines.push(
+        "You have tools to read files from the project workspace. Use them to ground your analysis",
+        "in actual code. Do not guess at file contents — read them. Cite specific files and line numbers.",
         "",
-        "You are reviewing and mutating an architecture draft.",
-        "You MUST respect the following invariants. If you violate them, your mutation will be rejected.",
-        "",
-        "INVARIANTS:",
-        invariant_text,
-        "",
-        "Output structured JSON: { draft (full rewrite of the document), critique (what you changed and why) }",
-      ].join("\n"),
-    });
+      );
+    }
+    jouster_lines.push(
+      "Output structured JSON: { draft (full rewrite of the document), critique (what you changed and why) }",
+    );
+    messages.push({ role: "system", content: jouster_lines.join("\n") });
   }
 
   // --- MIDDLE: critique trail as batched context ---

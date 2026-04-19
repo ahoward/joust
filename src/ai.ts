@@ -1,4 +1,5 @@
-import { generateText, generateObject } from "ai";
+import { generateText, Output, isLoopFinished, stepCountIs } from "ai";
+import type { ToolSet } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -68,7 +69,7 @@ export interface Message {
 export async function call_agent(
   agent: AgentConfig,
   messages: Message[],
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; tools?: ToolSet; max_tool_steps?: number }
 ): Promise<string> {
   const model = get_model(agent);
   check_context_size(agent.model, messages);
@@ -88,6 +89,10 @@ export async function call_agent(
       temperature: agent.temperature ?? 0.2,
       abortSignal: options?.signal,
       maxRetries: 0,
+      ...(options?.tools && {
+        tools: options.tools,
+        stopWhen: [isLoopFinished(), stepCountIs(options.max_tool_steps ?? 10)],
+      }),
     });
 
     return result.text;
@@ -102,7 +107,7 @@ export async function call_agent_structured<T>(
   agent: AgentConfig,
   messages: Message[],
   schema: z.ZodType<T>,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; tools?: ToolSet; max_tool_steps?: number }
 ): Promise<T> {
   const model = get_model(agent);
   check_context_size(agent.model, messages);
@@ -112,9 +117,9 @@ export async function call_agent_structured<T>(
 
   const stop_progress = start_progress_timer(`[${agent.name}]`);
   try {
-    const result = await generateObject({
+    const result = await generateText({
       model,
-      schema,
+      output: Output.object({ schema }),
       system: system_msgs.map((m) => m.content).join("\n\n"),
       messages: non_system.map((m) => ({
         role: m.role as "user" | "assistant",
@@ -123,9 +128,13 @@ export async function call_agent_structured<T>(
       temperature: agent.temperature ?? 0.2,
       abortSignal: options?.signal,
       maxRetries: 0,
+      ...(options?.tools && {
+        tools: options.tools,
+        stopWhen: [isLoopFinished(), stepCountIs(options.max_tool_steps ?? 10)],
+      }),
     });
 
-    return result.object;
+    return result.output as T;
   } finally {
     stop_progress();
   }

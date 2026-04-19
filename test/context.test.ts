@@ -136,4 +136,29 @@ describe("compile_context", () => {
     expect(trail_msg).toBeDefined();
     expect(trail_msg!.content).toContain("[security] mutated_draft: added mTLS");
   });
+
+  test("jouster system prompt mentions tools when has_tools is true", () => {
+    const messages = compile_context(mock_agent, mock_snowball, "jouster", { has_tools: true });
+    const system_msg = messages[0].content;
+    expect(system_msg).toContain("tools to read files");
+    expect(system_msg).toContain("Do not guess at file contents");
+  });
+
+  test("jouster system prompt does NOT mention tools when has_tools is false", () => {
+    const messages = compile_context(mock_agent, mock_snowball, "jouster");
+    const system_msg = messages[0].content;
+    expect(system_msg).not.toContain("tools to read files");
+  });
+
+  test("ask system prompt mentions tools when has_tools is true", () => {
+    const messages = compile_context(mock_agent, mock_snowball, "ask", { has_tools: true });
+    const system_msg = messages[0].content;
+    expect(system_msg).toContain("tools to read files");
+  });
+
+  test("polish system prompt mentions tools when has_tools is true", () => {
+    const messages = compile_context(mock_agent, mock_snowball, "polish", { has_tools: true });
+    const system_msg = messages[0].content;
+    expect(system_msg).toContain("tools to read files");
+  });
 });

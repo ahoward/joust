@@ -2,8 +2,10 @@ import { resolve, join } from "path";
 import { readFileSync, writeFileSync, readdirSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { call_agent_structured } from "./ai";
+import type { ToolSet } from "ai";
 import { compile_context } from "./context";
 import { resolve_config, get_main_agent, get_jousters } from "./config";
+import { create_workspace_tools } from "./tools";
 import { lint_mutation } from "./lint";
 import { maybe_compact } from "./compact";
 import { tank_execute, parse_duration, is_timeboxed_out } from "./tank";
@@ -151,6 +153,13 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   const max_retries = config.defaults.max_retries;
   const max_rounds = config.defaults.max_rounds;
   const interactive_interval = options.interactive ?? 0;
+  let workspace_tools: ToolSet | undefined;
+  let max_tool_steps: number | undefined;
+  if (config.defaults.workspace) {
+    workspace_tools = create_workspace_tools(config.defaults.workspace);
+    max_tool_steps = config.defaults.max_tool_steps;
+    log(`workspace: ${config.defaults.workspace} (agents have file access)`);
+  }
 
   try {
   for (let round = 1; round <= max_rounds; round++) {
@@ -170,6 +179,13 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
     config = resolve_config(dir);
     main = get_main_agent(config);
     jousters = get_jousters(config);
+    if (config.defaults.workspace) {
+      workspace_tools = create_workspace_tools(config.defaults.workspace);
+      max_tool_steps = config.defaults.max_tool_steps;
+    } else {
+      workspace_tools = undefined;
+      max_tool_steps = undefined;
+    }
 
     log(`\n=== round ${round}/${max_rounds} ===\n`);
 
@@ -191,7 +207,9 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
 
         const execute_mutation = async () => {
           // compile context for jouster
-          const messages = compile_context(jouster, snowball, "jouster");
+          const messages = compile_context(jouster, snowball, "jouster", {
+            has_tools: !!workspace_tools,
+          });
 
           // if retrying, append rejection feedback
           if (last_violations.length > 0) {
@@ -208,7 +226,11 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
 
           // call the jouster
           const signal = abort_controller.signal;
-          return await call_agent_structured(jouster, messages, MutationResultSchema, { signal });
+          return await call_agent_structured(jouster, messages, MutationResultSchema, {
+            signal,
+            tools: workspace_tools,
+            max_tool_steps,
+          });
         };
 
         try {
@@ -367,9 +389,13 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
 
     try {
       const polish_fn = async () => {
-        const polish_messages = compile_context(main, snowball, "polish");
+        const polish_messages = compile_context(main, snowball, "polish", {
+          has_tools: !!workspace_tools,
+        });
         return await call_agent_structured(main, polish_messages, MutationResultSchema, {
           signal: abort_controller.signal,
+          tools: workspace_tools,
+          max_tool_steps,
         });
       };
 

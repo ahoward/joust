@@ -85,6 +85,8 @@ export interface JoustDefaults {
   max_retries: number;
   compaction_threshold: number;
   max_rounds: number;
+  workspace?: string;
+  max_tool_steps?: number;
 }
 
 export interface JoustConfig {

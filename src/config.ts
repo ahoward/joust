@@ -1,5 +1,5 @@
-import { existsSync } from "fs";
-import { join } from "path";
+import { existsSync, statSync } from "fs";
+import { join, resolve } from "path";
 import { homedir } from "os";
 import { load_config, redact, to_json } from "./utils";
 import { JoustError } from "./errors";
@@ -100,6 +100,22 @@ export function resolve_config(project_dir?: string): JoustConfig {
     }
   }
 
+  // resolve workspace path relative to project dir
+  if (merged_defaults.workspace && project_dir) {
+    const ws = resolve(project_dir, merged_defaults.workspace);
+    if (!existsSync(ws) || !statSync(ws).isDirectory()) {
+      throw new JoustError(`workspace directory does not exist: ${ws}`);
+    }
+    merged_defaults.workspace = ws;
+  } else if (merged_defaults.workspace && !project_dir) {
+    // workspace without project dir — resolve relative to cwd
+    const ws = resolve(merged_defaults.workspace);
+    if (!existsSync(ws) || !statSync(ws).isDirectory()) {
+      throw new JoustError(`workspace directory does not exist: ${ws}`);
+    }
+    merged_defaults.workspace = ws;
+  }
+
   // expand all agent configs
   const agents: Record<string, AgentConfig> = {};
   for (const [name, raw] of Object.entries(merged_agents)) {
@@ -134,6 +150,8 @@ export function generate_default_config(): string {
     "  max_retries: 3",
     "  compaction_threshold: 10",
     "  max_rounds: 1",
+    "  # workspace: /path/to/project   # give agents read access to files",
+    "  # max_tool_steps: 10             # cap tool-use round-trips per agent turn",
     "",
     "agents:",
     "  main:",

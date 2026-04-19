@@ -4,6 +4,7 @@ import { scan_history, read_latest_history, log } from "./utils";
 import { compile_context, estimate_tokens } from "./context";
 import { call_agent } from "./ai";
 import { resolve_config, get_main_agent, get_jousters } from "./config";
+import { create_workspace_tools } from "./tools";
 import { JoustUserError } from "./errors";
 import type { HistoryEntry } from "./types";
 
@@ -199,6 +200,9 @@ export function plan(dir: string): void {
     log(`  total: ~$${total_cost.toFixed(2)}`);
   }
   log(`\nnote: estimates assume no retries. with retries, multiply by up to ${max_retries}x.`);
+  if (config.defaults.workspace) {
+    log(`note: workspace is set — agents will use tools to read files, increasing token usage.`);
+  }
 }
 
 // --- joust ask ---
@@ -219,7 +223,12 @@ export async function ask(dir: string, agent_name: string, question: string): Pr
   }
 
   const snowball = latest.snowball;
-  const messages = compile_context(agent, snowball, "ask");
+  const workspace = config.defaults.workspace;
+  const workspace_tools = workspace ? create_workspace_tools(workspace) : undefined;
+
+  const messages = compile_context(agent, snowball, "ask", {
+    has_tools: !!workspace_tools,
+  });
 
   // append the user's question after the draft context
   messages.push({
@@ -227,6 +236,9 @@ export async function ask(dir: string, agent_name: string, question: string): Pr
     content: question,
   });
 
-  const response = await call_agent(agent, messages);
+  const response = await call_agent(agent, messages, {
+    tools: workspace_tools,
+    max_tool_steps: config.defaults.max_tool_steps,
+  });
   process.stdout.write(response);
 }
