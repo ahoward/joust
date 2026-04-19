@@ -6,10 +6,6 @@ import type { ToolSet } from "ai";
 
 // --- path sandboxing ---
 
-const MAX_FILE_SIZE = 64 * 1024; // 64KB
-const MAX_LIST_RESULTS = 200;
-const MAX_SEARCH_RESULTS = 100;
-
 const IGNORE_PATTERNS = new Set([
   "node_modules",
   ".git",
@@ -66,11 +62,6 @@ function read_file_impl(workspace: string, path: string): string {
     return `error: not a file: ${path}`;
   }
 
-  if (stat.size > MAX_FILE_SIZE) {
-    const content = readFileSync(full_path, "utf-8").slice(0, MAX_FILE_SIZE);
-    return `${content}\n\n--- truncated at ${MAX_FILE_SIZE} bytes (file is ${stat.size} bytes) ---`;
-  }
-
   try {
     return readFileSync(full_path, "utf-8");
   } catch {
@@ -81,8 +72,6 @@ function read_file_impl(workspace: string, path: string): string {
 // --- file listing ---
 
 function walk_dir(dir: string, base: string, results: string[], pattern: RegExp): void {
-  if (results.length >= MAX_LIST_RESULTS) return;
-
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -91,7 +80,6 @@ function walk_dir(dir: string, base: string, results: string[], pattern: RegExp)
   }
 
   for (const entry of entries) {
-    if (results.length >= MAX_LIST_RESULTS) return;
     if (is_ignored(entry.name)) continue;
 
     const full = join(dir, entry.name);
@@ -141,11 +129,7 @@ function list_files_impl(workspace: string, pattern: string): string {
     return `no files matched pattern: ${pattern}`;
   }
 
-  let output = results.join("\n");
-  if (results.length >= MAX_LIST_RESULTS) {
-    output += `\n\n--- capped at ${MAX_LIST_RESULTS} results. use a more specific pattern ---`;
-  }
-  return output;
+  return results.join("\n");
 }
 
 // --- file searching ---
@@ -166,8 +150,6 @@ function search_files_impl(workspace: string, pattern: string, glob?: string): s
   const matches: string[] = [];
 
   function search_dir(dir: string): void {
-    if (matches.length >= MAX_SEARCH_RESULTS) return;
-
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -176,7 +158,6 @@ function search_files_impl(workspace: string, pattern: string, glob?: string): s
     }
 
     for (const entry of entries) {
-      if (matches.length >= MAX_SEARCH_RESULTS) return;
       if (is_ignored(entry.name)) continue;
 
       const full = join(dir, entry.name);
@@ -189,8 +170,6 @@ function search_files_impl(workspace: string, pattern: string, glob?: string): s
 
         let content;
         try {
-          const stat = statSync(full);
-          if (stat.size > MAX_FILE_SIZE) continue; // skip huge files
           content = readFileSync(full, "utf-8");
         } catch {
           continue;
@@ -198,7 +177,6 @@ function search_files_impl(workspace: string, pattern: string, glob?: string): s
 
         const lines = content.split("\n");
         for (let i = 0; i < lines.length; i++) {
-          if (matches.length >= MAX_SEARCH_RESULTS) break;
           const line = lines[i] ?? "";
           if (search_regex.test(line)) {
             matches.push(`${rel}:${i + 1}: ${line}`);
@@ -214,11 +192,7 @@ function search_files_impl(workspace: string, pattern: string, glob?: string): s
     return `no matches for pattern: ${pattern}${glob ? ` in files matching ${glob}` : ""}`;
   }
 
-  let output = matches.join("\n");
-  if (matches.length >= MAX_SEARCH_RESULTS) {
-    output += `\n\n--- capped at ${MAX_SEARCH_RESULTS} matches. use a more specific pattern ---`;
-  }
-  return output;
+  return matches.join("\n");
 }
 
 // --- tool factory ---
