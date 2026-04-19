@@ -19,6 +19,8 @@ import {
   log_status,
   to_json,
   append_log,
+  set_log_dir,
+  write_stdout,
 } from "./utils";
 import {
   MutationResultSchema,
@@ -105,6 +107,7 @@ async function human_intermission(snowball: Snowball, round: number): Promise<st
 export async function run(dir: string, options: RunOptions = {}): Promise<void> {
   dir = resolve(dir);
   acquire_lock(dir);
+  set_log_dir(dir);
 
   // resume: read latest state
   const latest = read_latest_history(dir);
@@ -484,8 +487,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   log(`steps: ${step} | invariants: ${must_count} MUST, ${should_count} SHOULD, ${must_not_count} MUST NOT`);
   log(`draft: ${word_count} words | critiques: ${trail_count} | elapsed: ${elapsed_str}`);
 
-  // final output to STDOUT
-  process.stdout.write(snowball.draft);
+  // final output to STDOUT (teed to stdout.log)
+  write_stdout(snowball.draft);
   } finally {
     if (timeout_id !== null) clearTimeout(timeout_id);
     process.removeAllListeners("SIGINT");

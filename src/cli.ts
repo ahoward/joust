@@ -182,8 +182,8 @@ function print_help() {
   log('  joust /prompt "/usr/local/bin must support sandboxed execution"');
   log('  joust /init gemini "realtime bidding engine"');
   log('  joust /prompt --preset openai "auth middleware"');
-  log("  joust /run ./realtime-bidding-engine/ --tank --timebox 1h");
-  log("  joust /run ./my-project/ --interactive=3");
+  log("  joust /run .joust/realtime-bidding-engine/ --tank --timebox 1h");
+  log("  joust /run .joust/my-project/ --interactive=3");
 }
 
 process.on("unhandledRejection", (err) => {

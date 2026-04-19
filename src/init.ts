@@ -12,6 +12,7 @@ import {
   commit_state,
   log,
   log_status,
+  set_log_dir,
 } from "./utils";
 import {
   BootstrapResultSchema,
@@ -106,12 +107,12 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
     human_directives: [],
   };
 
-  // create state directory
+  // create state directory under .joust/
   const slug = slugify(prompt);
-  const dir = resolve(slug);
+  const dir = resolve(".joust", slug);
   ensure_dir(dir);
   ensure_dir(join(dir, "history"));
-  ensure_dir(join(dir, "logs"));
+  set_log_dir(dir);
 
   // write config snapshot — auto-detect preset from env if not specified
   const effective_preset = preset ?? detect_preset();
@@ -139,7 +140,7 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
   for (const rule of snowball.invariants.MUST) log(`  MUST: ${rule}`);
   for (const rule of snowball.invariants.SHOULD) log(`  SHOULD: ${rule}`);
   for (const rule of snowball.invariants.MUST_NOT) log(`  MUST NOT: ${rule}`);
-  log(`\nready. review config and run: joust run ${dir}/`);
+  log(`\nready. review config and run: joust /run ${dir}/`);
 
   return dir;
 }

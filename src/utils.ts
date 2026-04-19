@@ -221,12 +221,38 @@ export function redact(obj: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
-// --- stderr helpers ---
+// --- tee logging ---
+// log() and log_status() always go to stderr.
+// when a run dir is set, they also tee to <dir>/stderr.log.
+// write_stdout() goes to stdout and tees to <dir>/stdout.log.
+
+let _log_dir: string | null = null;
+
+export function set_log_dir(dir: string): void {
+  _log_dir = dir;
+  // ensure logs dir exists for append_log, and create tee files
+  ensure_dir(join(dir, "logs"));
+}
 
 export function log(msg: string): void {
-  process.stderr.write(`${scrub_keys(msg)}\n`);
+  const scrubbed = scrub_keys(msg);
+  process.stderr.write(`${scrubbed}\n`);
+  if (_log_dir) {
+    try { appendFileSync(join(_log_dir, "stderr.log"), `${scrubbed}\n`); } catch {}
+  }
 }
 
 export function log_status(agent: string, action: string): void {
-  process.stderr.write(`[${agent}] ${scrub_keys(action)}\n`);
+  const scrubbed = `[${agent}] ${scrub_keys(action)}`;
+  process.stderr.write(`${scrubbed}\n`);
+  if (_log_dir) {
+    try { appendFileSync(join(_log_dir, "stderr.log"), `${scrubbed}\n`); } catch {}
+  }
+}
+
+export function write_stdout(text: string): void {
+  process.stdout.write(text);
+  if (_log_dir) {
+    try { appendFileSync(join(_log_dir, "stdout.log"), text); } catch {}
+  }
 }

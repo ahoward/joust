@@ -9,8 +9,8 @@ adversarial architecture compiler. LLMs don't agree — make them fight about it
 ```bash
 joust "design a zero-downtime migration strategy"        # bare prompt = bootstrap + run
 joust /init "fast api for mobile app, read-only postgres" # bootstrap only, pause for editing
-joust /run ./zero-downtime-migration/                     # start or resume the accumulator loop
-joust /tail ./zero-downtime-migration/                    # stream agent logs in real-time
+joust /run .joust/zero-downtime-migration/                     # start or resume the accumulator loop
+joust /tail .joust/zero-downtime-migration/                    # stream agent logs in real-time
 ```
 
 ---
@@ -25,12 +25,12 @@ commands use `/` prefix to disambiguate from bare prompts:
 | `joust /prompt <prompt>` | explicit prompt (escapes prompts starting with /) | `joust /prompt "/usr/local/bin..."` |
 | `joust /init <prompt>` | bootstrap state directory, write config, pause | `joust /init "mobile api"` |
 | `joust /init` (no args) | open `$EDITOR` for prompt input | `joust /init` |
-| `joust /run [dir]` | start or resume the accumulator loop | `joust /run ./my-api/` |
-| `joust /tail [dir]` | stream `logs/` in real-time, color-coded by agent | `joust /tail ./my-api/` |
-| `joust /status [dir]` | show current run status | `joust /status ./my-api/` |
-| `joust /export [dir]` | output latest draft to stdout | `joust /export ./my-api/` |
-| `joust /diff [dir] [a] [b]` | diff between two history steps | `joust /diff ./my-api/ 1 5` |
-| `joust /plan [dir]` | estimate token usage and cost | `joust /plan ./my-api/` |
+| `joust /run [dir]` | start or resume the accumulator loop | `joust /run .joust/my-api/` |
+| `joust /tail [dir]` | stream `logs/` in real-time, color-coded by agent | `joust /tail .joust/my-api/` |
+| `joust /status [dir]` | show current run status | `joust /status .joust/my-api/` |
+| `joust /export [dir]` | output latest draft to stdout | `joust /export .joust/my-api/` |
+| `joust /diff [dir] [a] [b]` | diff between two history steps | `joust /diff .joust/my-api/ 1 5` |
+| `joust /plan [dir]` | estimate token usage and cost | `joust /plan .joust/my-api/` |
 | `joust /ask [dir] <agent> <q>` | one-shot query to an agent | `joust /ask . main "why mTLS?"` |
 
 ## execution flags
@@ -98,14 +98,16 @@ data flow: `cli.ts → config.ts (load yaml + preset) → run.ts (loop) → cont
 ## state directory layout
 
 ```
-<project-slug>/
+.joust/<project-slug>/
   rfc.yaml              human-editable config (personas, keys, limits). re-read per round.
   snowball.json         current working state (pretty JSON, bomber atomic copy)
+  stderr.log            full stderr capture (teed from terminal)
+  stdout.log            full stdout capture (teed from terminal)
   history/              append-only immutable ledger
     000-main.json       seed (main bootstrap)
     001-security.json   security pass
     002-cfo.json        cfo pass
-  logs/                 raw token streams
+  logs/                 per-agent logs
     execution.log       system events (retries, timeouts, kills)
     agent-main.log      raw token stream from main
     agent-security.log

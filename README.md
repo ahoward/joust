@@ -104,11 +104,11 @@ joust "realtime bidding engine, must handle 100k qps, no vendor lock-in"
 
 # or split bootstrap from execution
 joust /init "realtime bidding engine"
-$EDITOR ./realtime-bidding-engine/rfc.yaml    # edit config, swap agents, tune prompts
-joust /run ./realtime-bidding-engine           # let them fight
+$EDITOR .joust/realtime-bidding-engine/rfc.yaml    # edit config, swap agents, tune prompts
+joust /run .joust/realtime-bidding-engine           # let them fight
 
 # watch the models argue in real-time from another terminal
-joust /tail ./realtime-bidding-engine
+joust /tail .joust/realtime-bidding-engine
 ```
 
 ## using joust from an AI coding agent
@@ -146,8 +146,8 @@ then from Claude Code:
 
 ```
 /joust design a caching layer for mobile APIs
-/joust /status ./my-project/
-/joust /run ./my-project/ --tank
+/joust /status .joust/my-project/
+/joust /run .joust/my-project/ --tank
 ```
 
 ### other agents
@@ -222,14 +222,16 @@ patches. structural integrity over token golfing.
 ## the filesystem is the database
 
 ```
-realtime-bidding-engine/
+.joust/realtime-bidding-engine/
   rfc.yaml              # your config. edit between rounds.
   snowball.json         # current state (pretty json, atomic copy)
+  stderr.log            # full stderr capture (teed from terminal)
+  stdout.log            # full stdout capture (teed from terminal)
   history/              # append-only immutable ledger
     000-main.json       # seed
     001-security.json   # security pass
     002-cfo.json        # cfo pass
-  logs/                 # raw token streams
+  logs/                 # per-agent logs
     execution.log
     agent-security.log
 ```

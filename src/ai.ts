@@ -1,4 +1,4 @@
-import { generateText, generateObject, isLoopFinished, stepCountIs } from "ai";
+import { generateText, generateObject, isLoopFinished } from "ai";
 import type { ToolSet } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -91,7 +91,7 @@ export async function call_agent(
       maxRetries: 0,
       ...(options?.tools && {
         tools: options.tools,
-        stopWhen: [isLoopFinished(), stepCountIs(options.max_tool_steps ?? 10)],
+        stopWhen: [isLoopFinished()],
       }),
     });
 
@@ -138,7 +138,7 @@ export async function call_agent_structured<T>(
         abortSignal: options?.signal,
         maxRetries: 0,
         tools: options.tools,
-        stopWhen: [isLoopFinished(), stepCountIs(options.max_tool_steps ?? 10)],
+        stopWhen: [isLoopFinished()],
       });
 
       // build phase 2 messages — include research text if non-empty

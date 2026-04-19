@@ -1,6 +1,6 @@
 import { resolve, join } from "path";
 import { readFileSync } from "fs";
-import { scan_history, read_latest_history, log } from "./utils";
+import { scan_history, read_latest_history, log, write_stdout, set_log_dir } from "./utils";
 import { compile_context, estimate_tokens } from "./context";
 import { call_agent } from "./ai";
 import { resolve_config, get_main_agent, get_jousters } from "./config";
@@ -45,13 +45,14 @@ export function status(dir: string): void {
 
 export function export_draft(dir: string): void {
   dir = resolve(dir);
+  set_log_dir(dir);
   const latest = read_latest_history(dir);
 
   if (!latest) {
-    throw new JoustUserError("no history found — run 'joust init' first");
+    throw new JoustUserError("no history found — run 'joust /init' first");
   }
 
-  process.stdout.write(latest.snowball.draft);
+  write_stdout(latest.snowball.draft);
 }
 
 // --- joust diff ---
@@ -209,6 +210,7 @@ export function plan(dir: string): void {
 
 export async function ask(dir: string, agent_name: string, question: string): Promise<void> {
   dir = resolve(dir);
+  set_log_dir(dir);
   const config = resolve_config(dir);
   const all_agents = config.agents;
   const agent = all_agents[agent_name];
@@ -240,5 +242,5 @@ export async function ask(dir: string, agent_name: string, question: string): Pr
     tools: workspace_tools,
     max_tool_steps: config.defaults.max_tool_steps,
   });
-  process.stdout.write(response);
+  write_stdout(response);
 }
