@@ -69,6 +69,71 @@ function start_progress_timer(label: string): () => void {
   };
 }
 
+// --- overload-aware retry ---
+// Anthropic 529 "Overloaded" can persist for minutes. The SDK's built-in
+// retry gives up after ~55s which is far too aggressive. Wrap calls in a
+// longer backoff loop: 10s, 20s, 40s, 60s, 60s... capped at ~10 min total.
+// We set the SDK's inner maxRetries to 0 so we own retry policy entirely.
+
+const MAX_RETRY_ELAPSED_MS = 10 * 60 * 1000;
+const BACKOFF_SCHEDULE_MS = [10_000, 20_000, 40_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000];
+
+function is_transient_error(err: any): boolean {
+  const status = err?.statusCode ?? err?.status ?? err?.cause?.statusCode;
+  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 529) return true;
+  const msg = String(err?.message ?? err?.cause?.message ?? err ?? "").toLowerCase();
+  if (msg.includes("overloaded")) return true;
+  if (msg.includes("rate limit") || msg.includes("rate_limit")) return true;
+  if (msg.includes("service unavailable")) return true;
+  if (msg.includes("bad gateway")) return true;
+  if (msg.includes("internal server error")) return true;
+  return false;
+}
+
+function sleep_abortable(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error("aborted"));
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", on_abort);
+      resolve();
+    }, ms);
+    const on_abort = () => {
+      clearTimeout(timer);
+      reject(new Error("aborted"));
+    };
+    signal?.addEventListener("abort", on_abort, { once: true });
+  });
+}
+
+async function with_retry<T>(
+  label: string,
+  signal: AbortSignal | undefined,
+  fn: () => Promise<T>
+): Promise<T> {
+  const start = Date.now();
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (signal?.aborted) throw err;
+      if (!is_transient_error(err)) throw err;
+      const elapsed = Date.now() - start;
+      if (elapsed >= MAX_RETRY_ELAPSED_MS) throw err;
+      const base = BACKOFF_SCHEDULE_MS[Math.min(attempt, BACKOFF_SCHEDULE_MS.length - 1)];
+      const jitter = Math.floor(Math.random() * Math.min(5000, base / 2));
+      const delay = base + jitter;
+      attempt++;
+      const msg = String(err?.message ?? err?.cause?.message ?? err);
+      const short = msg.length > 80 ? msg.slice(0, 77) + "..." : msg;
+      process.stderr.write(
+        `${CLEAR_LINE}${DIM}${label} ${short} — retrying in ${Math.round(delay / 1000)}s (attempt ${attempt})${RESET}\n`
+      );
+      await sleep_abortable(delay, signal);
+    }
+  }
+}
+
 // --- message types ---
 
 export interface Message {
@@ -91,21 +156,23 @@ export async function call_agent(
 
   const stop_progress = start_progress_timer(`[${agent.name}]`);
   try {
-    const result = await generateText({
-      model,
-      system: system_msgs.map((m) => m.content).join("\n\n"),
-      messages: non_system.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      })),
-      temperature: agent.temperature ?? 0.2,
-      abortSignal: options?.signal,
-      maxRetries: 3,
-      ...(options?.tools && {
-        tools: options.tools,
-        stopWhen: [isLoopFinished()],
-      }),
-    });
+    const result = await with_retry(`[${agent.name}]`, options?.signal, () =>
+      generateText({
+        model,
+        system: system_msgs.map((m) => m.content).join("\n\n"),
+        messages: non_system.map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+        temperature: agent.temperature ?? 0.2,
+        abortSignal: options?.signal,
+        maxRetries: 0,
+        ...(options?.tools && {
+          tools: options.tools,
+          stopWhen: [isLoopFinished()],
+        }),
+      })
+    );
 
     return result.text;
   } finally {
@@ -142,16 +209,18 @@ export async function call_agent_structured<T>(
   try {
     if (options?.tools) {
       // phase 1: tool use — let the agent read files and think freely
-      const research = await generateText({
-        model,
-        system,
-        messages: formatted,
-        temperature: agent.temperature ?? 0.2,
-        abortSignal: options?.signal,
-        maxRetries: 3,
-        tools: options.tools,
-        stopWhen: [isLoopFinished()],
-      });
+      const research = await with_retry(`[${agent.name}]`, options?.signal, () =>
+        generateText({
+          model,
+          system,
+          messages: formatted,
+          temperature: agent.temperature ?? 0.2,
+          abortSignal: options?.signal,
+          maxRetries: 0,
+          tools: options!.tools,
+          stopWhen: [isLoopFinished()],
+        })
+      );
 
       // build phase 2 messages — include research text if non-empty
       const phase2_messages = [...formatted];
@@ -181,29 +250,33 @@ export async function call_agent_structured<T>(
       }
 
       // phase 2: structured extraction — demand JSON
-      const result = await generateObject({
-        model,
-        schema,
-        system,
-        messages: phase2_messages,
-        temperature: agent.temperature ?? 0.2,
-        abortSignal: options?.signal,
-        maxRetries: 3,
-      });
+      const result = await with_retry(`[${agent.name}]`, options?.signal, () =>
+        generateObject({
+          model,
+          schema,
+          system,
+          messages: phase2_messages,
+          temperature: agent.temperature ?? 0.2,
+          abortSignal: options?.signal,
+          maxRetries: 0,
+        })
+      );
 
       return result.object;
     }
 
     // no tools: single-phase generateObject (reliable native JSON mode)
-    const result = await generateObject({
-      model,
-      schema,
-      system,
-      messages: formatted,
-      temperature: agent.temperature ?? 0.2,
-      abortSignal: options?.signal,
-      maxRetries: 3,
-    });
+    const result = await with_retry(`[${agent.name}]`, options?.signal, () =>
+      generateObject({
+        model,
+        schema,
+        system,
+        messages: formatted,
+        temperature: agent.temperature ?? 0.2,
+        abortSignal: options?.signal,
+        maxRetries: 0,
+      })
+    );
 
     return result.object;
   } finally {
