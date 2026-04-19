@@ -45,15 +45,19 @@ function get_model(agent: AgentConfig) {
 
 // --- progress timer for long API calls ---
 
+const DIM = process.stderr.isTTY ? "\x1b[2m" : "";
+const RESET = process.stderr.isTTY ? "\x1b[0m" : "";
+const CLEAR_LINE = process.stderr.isTTY ? "\x1b[2K\r" : "\r";
+
 function start_progress_timer(label: string): () => void {
   const start = Date.now();
   const timer = setInterval(() => {
     const elapsed = Math.round((Date.now() - start) / 1000);
-    process.stderr.write(`\r${label} (${elapsed}s)`);
+    process.stderr.write(`${CLEAR_LINE}${DIM}${label} ${elapsed}s${RESET}`);
   }, 5000);
   return () => {
     clearInterval(timer);
-    process.stderr.write("\r"); // clear the progress line
+    process.stderr.write(CLEAR_LINE);
   };
 }
 

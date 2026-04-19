@@ -41,12 +41,33 @@ export function to_json(obj: unknown): string {
 
 // --- slugify ---
 
+// strip filler words to extract the meaningful core of a prompt
+const STOP_WORDS = new Set([
+  "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+  "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+  "should", "may", "might", "must", "can", "could", "i", "me", "my",
+  "we", "our", "you", "your", "it", "its", "that", "this", "these",
+  "those", "of", "in", "to", "for", "with", "on", "at", "from", "by",
+  "about", "into", "through", "during", "before", "after", "and", "but",
+  "or", "not", "no", "so", "if", "then", "than", "too", "very", "just",
+  "how", "what", "when", "where", "why", "who", "which", "all", "each",
+  "every", "both", "few", "more", "most", "other", "some", "such",
+  "want", "need", "like", "make", "get", "use", "also",
+  "design", "build", "create", "implement", "develop", "write",
+]);
+
 export function slugify(text: string): string {
-  return text
+  const date = new Date().toISOString().slice(0, 10); // yyyy-mm-dd
+
+  const words = text
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+
+  const slug = words.slice(0, 6).join("-") || "joust";
+
+  return `${date}--${slug}`;
 }
 
 // --- ensure directory ---
@@ -221,30 +242,101 @@ export function redact(obj: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
+// --- colors ---
+
+const IS_TTY = process.stderr.isTTY;
+
+const C = {
+  reset:   IS_TTY ? "\x1b[0m"  : "",
+  bold:    IS_TTY ? "\x1b[1m"  : "",
+  dim:     IS_TTY ? "\x1b[2m"  : "",
+  red:     IS_TTY ? "\x1b[31m" : "",
+  green:   IS_TTY ? "\x1b[32m" : "",
+  yellow:  IS_TTY ? "\x1b[33m" : "",
+  blue:    IS_TTY ? "\x1b[34m" : "",
+  magenta: IS_TTY ? "\x1b[35m" : "",
+  cyan:    IS_TTY ? "\x1b[36m" : "",
+  gray:    IS_TTY ? "\x1b[90m" : "",
+};
+
+// agent name → color (stable assignment by hash for unknown agents)
+const AGENT_COLORS: Record<string, string> = {
+  main: C.cyan,
+  security: C.red,
+  cfo: C.yellow,
+  dba: C.green,
+};
+
+const PALETTE = [C.magenta, C.blue, C.green, C.yellow, C.red, C.cyan];
+
+function agent_color(name: string): string {
+  if (AGENT_COLORS[name]) return AGENT_COLORS[name];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  return PALETTE[Math.abs(hash) % PALETTE.length];
+}
+
 // --- tee logging ---
 // log() and log_status() always go to stderr.
 // when a run dir is set, they also tee to <dir>/stderr.log.
 // write_stdout() goes to stdout and tees to <dir>/stdout.log.
+// log files always get plain text (no ANSI codes).
 
 let _log_dir: string | null = null;
 
 export function set_log_dir(dir: string): void {
   _log_dir = dir;
-  // ensure logs dir exists for append_log, and create tee files
   ensure_dir(join(dir, "logs"));
+}
+
+function strip_ansi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 export function log(msg: string): void {
   const scrubbed = scrub_keys(msg);
   process.stderr.write(`${scrubbed}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "stderr.log"), `${scrubbed}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "stderr.log"), `${strip_ansi(scrubbed)}\n`); } catch {}
   }
 }
 
 export function log_status(agent: string, action: string): void {
-  const scrubbed = `[${agent}] ${scrub_keys(action)}`;
-  process.stderr.write(`${scrubbed}\n`);
+  const color = agent_color(agent);
+  const scrubbed = scrub_keys(action);
+  process.stderr.write(`${color}${C.bold}[${agent}]${C.reset} ${scrubbed}\n`);
+  if (_log_dir) {
+    try { appendFileSync(join(_log_dir, "stderr.log"), `[${agent}] ${scrubbed}\n`); } catch {}
+  }
+}
+
+export function log_header(msg: string): void {
+  const scrubbed = scrub_keys(msg);
+  process.stderr.write(`\n${C.bold}${scrubbed}${C.reset}\n\n`);
+  if (_log_dir) {
+    try { appendFileSync(join(_log_dir, "stderr.log"), `\n${scrubbed}\n\n`); } catch {}
+  }
+}
+
+export function log_success(msg: string): void {
+  const scrubbed = scrub_keys(msg);
+  process.stderr.write(`${C.green}${scrubbed}${C.reset}\n`);
+  if (_log_dir) {
+    try { appendFileSync(join(_log_dir, "stderr.log"), `${scrubbed}\n`); } catch {}
+  }
+}
+
+export function log_warn(msg: string): void {
+  const scrubbed = scrub_keys(msg);
+  process.stderr.write(`${C.yellow}${scrubbed}${C.reset}\n`);
+  if (_log_dir) {
+    try { appendFileSync(join(_log_dir, "stderr.log"), `${scrubbed}\n`); } catch {}
+  }
+}
+
+export function log_error(msg: string): void {
+  const scrubbed = scrub_keys(msg);
+  process.stderr.write(`${C.red}${scrubbed}${C.reset}\n`);
   if (_log_dir) {
     try { appendFileSync(join(_log_dir, "stderr.log"), `${scrubbed}\n`); } catch {}
   }

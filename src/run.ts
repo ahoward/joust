@@ -17,6 +17,10 @@ import {
   release_lock,
   log,
   log_status,
+  log_header,
+  log_success,
+  log_warn,
+  log_error,
   to_json,
   append_log,
   set_log_dir,
@@ -190,12 +194,15 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
       max_tool_steps = undefined;
     }
 
-    log(`\n=== round ${round}/${max_rounds} ===\n`);
+    log_header(`=== round ${round}/${max_rounds} ===`);
 
     for (const jouster of jousters) {
+      // check signal before each agent
+      if (signal_received) break;
+
       // check timebox before each agent
       if (timebox_ms && is_timeboxed_out(start_time, timebox_ms)) {
-        log(`\ntimebox reached, pausing before ${jouster.name}`);
+        log_warn(`timebox reached, pausing before ${jouster.name}`);
         break;
       }
 
@@ -296,7 +303,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             step++;
             accepted = true;
 
-            log_status(jouster.name, `accepted (attempt ${attempts})`);
+            log_success(`[${jouster.name}] accepted (attempt ${attempts})`);
           } else {
             // rejected — save the rejection and retry
             last_violations = lint.violations;
@@ -314,7 +321,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             commit_state(dir, step, jouster.name, entry);
             step++;
 
-            log_status(jouster.name, `rejected (attempt ${attempts}/${max_retries})`);
+            log_warn(`[${jouster.name}] rejected (attempt ${attempts}/${max_retries})`);
           }
         } catch (err: any) {
           if (err.name === "AbortError" || signal_received) {
@@ -333,13 +340,13 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           }
 
           const err_detail = err.message || err.cause?.message || String(err);
-          log_status(jouster.name, `error: ${err_detail}`);
+          log_error(`[${jouster.name}] error: ${err_detail}`);
           append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} error: ${err_detail}\n`);
         }
       }
 
-      if (!accepted) {
-        log_status(jouster.name, `skipped after ${max_retries} failed attempts`);
+      if (!accepted && !signal_received) {
+        log_warn(`[${jouster.name}] skipped after ${max_retries} failed attempts`);
         append_log(dir, "execution.log", `\n--- ${new Date().toISOString()} ---\n${jouster.name} exhausted retries, skipping\n`);
 
         // circuit breaker: signal that intervention may be needed
@@ -364,6 +371,9 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
         }
       }
     }
+
+    // bail immediately on signal
+    if (signal_received) break;
 
     // compaction check before polish
     try {
@@ -392,8 +402,11 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
         step++;
       }
     } catch (err: any) {
-      log_status("main", `compaction error: ${err.message}`);
+      if (!signal_received) log_error(`[main] compaction error: ${err.message}`);
     }
+
+    // bail immediately on signal
+    if (signal_received) break;
 
     // main polish at end of round
     log_status("main", "polishing draft...");
@@ -420,7 +433,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             max_tool_steps,
           });
           if (!polish_lint.valid) {
-            log_status("main", `[warn] polish violated invariants: ${polish_lint.violations.join("; ")}`);
+            log_warn(`[main] polish violated invariants: ${polish_lint.violations.join("; ")}`);
           }
         } catch {
           // lint failure during polish is non-fatal
@@ -454,7 +467,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
         log_status("main", "polish complete");
       }
     } catch (err: any) {
-      log_status("main", `polish error: ${err.message}`);
+      if (!signal_received) log_error(`[main] polish error: ${err.message}`);
     }
 
     // interactive pause
@@ -486,11 +499,11 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   const must_not_count = snowball.invariants.MUST_NOT.length;
 
   if (signal_received) {
-    log(`\n=== joust interrupted ===`);
+    log_warn(`\n=== joust interrupted ===`);
     log(`steps: ${step} | elapsed: ${elapsed_str}`);
     log(`state saved. resume with: joust /run ${dir}/`);
   } else {
-    log(`\n=== joust complete ===`);
+    log_header(`=== joust complete ===`);
     log(`steps: ${step} | invariants: ${must_count} MUST, ${should_count} SHOULD, ${must_not_count} MUST NOT`);
     log(`draft: ${word_count} words | critiques: ${trail_count} | elapsed: ${elapsed_str}`);
 

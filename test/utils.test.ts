@@ -2,25 +2,30 @@ import { describe, test, expect } from "bun:test";
 import { slugify, scrub_keys, to_json, redact } from "../src/utils";
 
 describe("slugify", () => {
-  test("basic conversion", () => {
-    expect(slugify("Hello World")).toBe("hello-world");
+  const date = new Date().toISOString().slice(0, 10);
+
+  test("date-prefixed with meaningful words", () => {
+    const result = slugify("Hello World");
+    expect(result).toBe(`${date}--hello-world`);
   });
 
-  test("strips special characters", () => {
-    expect(slugify("design a caching layer!")).toBe("design-a-caching-layer");
+  test("strips stop words", () => {
+    const result = slugify("design a caching layer for mobile APIs");
+    expect(result).toBe(`${date}--caching-layer-mobile-apis`);
   });
 
-  test("trims leading/trailing dashes", () => {
-    expect(slugify("--hello--")).toBe("hello");
+  test("limits to 6 meaningful words", () => {
+    const result = slugify("realtime bidding engine must handle 100k qps vendor lock");
+    const words = result.replace(`${date}--`, "").split("-");
+    expect(words.length).toBeLessThanOrEqual(6);
   });
 
-  test("truncates to 64 chars", () => {
-    const long = "a".repeat(100);
-    expect(slugify(long).length).toBeLessThanOrEqual(64);
+  test("falls back to 'joust' for empty input", () => {
+    expect(slugify("")).toBe(`${date}--joust`);
   });
 
-  test("handles empty string", () => {
-    expect(slugify("")).toBe("");
+  test("starts with date prefix", () => {
+    expect(slugify("anything")).toMatch(/^\d{4}-\d{2}-\d{2}--/);
   });
 });
 
