@@ -100,15 +100,16 @@ export function resolve_config(project_dir?: string): JoustConfig {
     }
   }
 
-  // resolve workspace path relative to project dir
-  if (merged_defaults.workspace && project_dir) {
+  // resolve workspace — defaults to project dir
+  if (!merged_defaults.workspace && project_dir) {
+    merged_defaults.workspace = resolve(project_dir);
+  } else if (merged_defaults.workspace && project_dir) {
     const ws = resolve(project_dir, merged_defaults.workspace);
     if (!existsSync(ws) || !statSync(ws).isDirectory()) {
       throw new JoustError(`workspace directory does not exist: ${ws}`);
     }
     merged_defaults.workspace = ws;
   } else if (merged_defaults.workspace && !project_dir) {
-    // workspace without project dir — resolve relative to cwd
     const ws = resolve(merged_defaults.workspace);
     if (!existsSync(ws) || !statSync(ws).isDirectory()) {
       throw new JoustError(`workspace directory does not exist: ${ws}`);
@@ -150,7 +151,7 @@ export function generate_default_config(): string {
     "  max_retries: 3",
     "  compaction_threshold: 10",
     "  max_rounds: 1",
-    "  # workspace: /path/to/project   # give agents read access to files",
+    "  # workspace: .                   # default: project dir. set to override",
     "  # max_tool_steps: 10             # cap tool-use round-trips per agent turn",
     "",
     "agents:",
