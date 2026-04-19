@@ -141,19 +141,39 @@ export async function call_agent_structured<T>(
         stopWhen: [isLoopFinished(), stepCountIs(options.max_tool_steps ?? 10)],
       });
 
-      // phase 2: structured extraction — feed the research back and demand JSON
+      // build phase 2 messages — include research text if non-empty
+      const phase2_messages = [...formatted];
+      const research_text = research.text.trim();
+      if (research_text) {
+        phase2_messages.push({ role: "assistant" as const, content: research_text });
+        phase2_messages.push({
+          role: "user" as const,
+          content: "Now produce your final output as structured JSON matching the required schema. Incorporate all findings from your analysis above.",
+        });
+      } else {
+        // model used tools but produced no text summary — ask it to synthesize
+        const tool_summary = research.steps
+          .flatMap((s: any) => s.toolResults ?? [])
+          .map((r: any) => `[${r.toolName}] ${String(r.output).slice(0, 500)}`)
+          .join("\n\n");
+        phase2_messages.push({
+          role: "user" as const,
+          content: [
+            "The agent used tools to research the codebase. Here are the tool results:",
+            "",
+            tool_summary.slice(0, 50000),
+            "",
+            "Now produce your final output as structured JSON matching the required schema.",
+          ].join("\n"),
+        });
+      }
+
+      // phase 2: structured extraction — demand JSON
       const result = await generateObject({
         model,
         schema,
         system,
-        messages: [
-          ...formatted,
-          { role: "assistant" as const, content: research.text },
-          {
-            role: "user" as const,
-            content: "Now produce your final output as structured JSON matching the required schema. Incorporate all findings from your analysis above.",
-          },
-        ],
+        messages: phase2_messages,
         temperature: agent.temperature ?? 0.2,
         abortSignal: options?.signal,
         maxRetries: 0,
