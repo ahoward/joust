@@ -7,6 +7,14 @@ import type { z } from "zod";
 import { check_context_size } from "./context";
 import type { AgentConfig } from "./types";
 
+// --- no-timeout fetch ---
+// Bun's default fetch has a ~300s timeout. LLM calls with tool use can take
+// much longer. Pass a custom fetch that strips the timeout entirely.
+
+const no_timeout_fetch: typeof globalThis.fetch = (input, init) => {
+  return globalThis.fetch(input, { ...init, signal: init?.signal ?? undefined });
+};
+
 // --- provider detection ---
 
 function resolve_api_key(agent: AgentConfig): string {
@@ -24,22 +32,22 @@ function get_model(agent: AgentConfig) {
   const api_key = resolve_api_key(agent);
 
   if (model_id.startsWith("claude-") || model_id.startsWith("anthropic/")) {
-    const provider = createAnthropic({ apiKey: api_key });
+    const provider = createAnthropic({ apiKey: api_key, fetch: no_timeout_fetch });
     return provider(model_id.replace("anthropic/", ""));
   }
 
   if (model_id.startsWith("gemini-") || model_id.startsWith("google/")) {
-    const provider = createGoogleGenerativeAI({ apiKey: api_key });
+    const provider = createGoogleGenerativeAI({ apiKey: api_key, fetch: no_timeout_fetch });
     return provider(model_id.replace("google/", ""));
   }
 
   if (model_id.startsWith("gpt-") || model_id.startsWith("o1") || model_id.startsWith("openai/")) {
-    const provider = createOpenAI({ apiKey: api_key });
+    const provider = createOpenAI({ apiKey: api_key, fetch: no_timeout_fetch });
     return provider(model_id.replace("openai/", ""));
   }
 
   // fallback: try anthropic
-  const provider = createAnthropic({ apiKey: api_key });
+  const provider = createAnthropic({ apiKey: api_key, fetch: no_timeout_fetch });
   return provider(model_id);
 }
 
