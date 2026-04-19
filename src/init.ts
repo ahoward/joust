@@ -3,7 +3,7 @@ import { join, resolve } from "path";
 import { tmpdir } from "os";
 import { call_agent_structured } from "./ai";
 import { compile_context } from "./context";
-import { resolve_config, get_main_agent, generate_default_config } from "./config";
+import { resolve_config, get_main_agent, generate_default_config, detect_preset, type Preset } from "./config";
 import {
   slugify,
   ensure_dir,
@@ -68,7 +68,7 @@ function read_prompt(input: string): string {
 
 // --- bootstrap ---
 
-export async function init(args: string[]): Promise<string> {
+export async function init(args: string[], preset?: Preset): Promise<string> {
   // get the prompt
   let prompt: string;
   if (args.length === 0) {
@@ -113,8 +113,10 @@ export async function init(args: string[]): Promise<string> {
   ensure_dir(join(dir, "history"));
   ensure_dir(join(dir, "logs"));
 
-  // write config snapshot
-  write_atomic(join(dir, "rfc.yaml"), generate_default_config());
+  // write config snapshot — auto-detect preset from env if not specified
+  const effective_preset = preset ?? detect_preset();
+  log(`preset: ${effective_preset}`);
+  write_atomic(join(dir, "rfc.yaml"), generate_default_config(effective_preset));
 
   // write seed history entry
   const entry: HistoryEntry = {

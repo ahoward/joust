@@ -144,7 +144,89 @@ export function get_jousters(config: JoustConfig): AgentConfig[] {
 
 // --- generate default rfc.yaml content ---
 
-export function generate_default_config(): string {
+// --- presets ---
+
+export const PRESETS = ["anthropic", "gemini", "openai", "mixed"] as const;
+export type Preset = (typeof PRESETS)[number];
+
+export function is_preset(s: string): s is Preset {
+  return (PRESETS as readonly string[]).includes(s);
+}
+
+export function detect_preset(): Preset {
+  const has_anthropic = !!process.env.ANTHROPIC_API_KEY;
+  const has_gemini = !!process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const has_openai = !!process.env.OPENAI_API_KEY;
+
+  const count = [has_anthropic, has_gemini, has_openai].filter(Boolean).length;
+
+  if (count >= 2) return "mixed";
+  if (has_gemini && !has_anthropic) return "gemini";
+  if (has_openai && !has_anthropic && !has_gemini) return "openai";
+  return "anthropic"; // default — will fail at call time with a clear error if key is missing
+}
+
+interface PresetAgent {
+  model: string;
+  api_key: string;
+  system: string;
+}
+
+interface PresetConfig {
+  agents: Record<string, PresetAgent>;
+}
+
+const SYSTEM_MAIN =
+  "You are the lead architect. You own the core vision.\n" +
+  "Before any peer review, define strict RFC 2119 invariants\n" +
+  "(MUST, SHOULD, MUST NOT). Protect these invariants across all revisions.";
+
+const SYSTEM_SECURITY =
+  "You are a ruthless security auditor. Mutate the draft to close\n" +
+  "vulnerabilities, but you MUST respect the invariants.";
+
+const SYSTEM_CFO =
+  "You are the CFO. Optimize for cost and margin,\n" +
+  "but you MUST respect the invariants.";
+
+const PRESET_CONFIGS: Record<Preset, PresetConfig> = {
+  anthropic: {
+    agents: {
+      main:     { model: "claude-opus-4-6",   api_key: "$ANTHROPIC_API_KEY", system: SYSTEM_MAIN },
+      security: { model: "claude-sonnet-4-6", api_key: "$ANTHROPIC_API_KEY", system: SYSTEM_SECURITY },
+      cfo:      { model: "claude-sonnet-4-6", api_key: "$ANTHROPIC_API_KEY", system: SYSTEM_CFO },
+    },
+  },
+  gemini: {
+    agents: {
+      main:     { model: "gemini-2.5-pro",  api_key: "$GOOGLE_GENERATIVE_AI_API_KEY", system: SYSTEM_MAIN },
+      security: { model: "gemini-2.5-pro",  api_key: "$GOOGLE_GENERATIVE_AI_API_KEY", system: SYSTEM_SECURITY },
+      cfo:      { model: "gemini-2.5-pro",  api_key: "$GOOGLE_GENERATIVE_AI_API_KEY", system: SYSTEM_CFO },
+    },
+  },
+  openai: {
+    agents: {
+      main:     { model: "gpt-4o", api_key: "$OPENAI_API_KEY", system: SYSTEM_MAIN },
+      security: { model: "gpt-4o", api_key: "$OPENAI_API_KEY", system: SYSTEM_SECURITY },
+      cfo:      { model: "gpt-4o", api_key: "$OPENAI_API_KEY", system: SYSTEM_CFO },
+    },
+  },
+  mixed: {
+    agents: {
+      main:     { model: "claude-opus-4-6",  api_key: "$ANTHROPIC_API_KEY",            system: SYSTEM_MAIN },
+      security: { model: "gemini-2.5-pro",   api_key: "$GOOGLE_GENERATIVE_AI_API_KEY", system: SYSTEM_SECURITY },
+      cfo:      { model: "gpt-4o",           api_key: "$OPENAI_API_KEY",               system: SYSTEM_CFO },
+    },
+  },
+};
+
+function format_yaml_system(system: string, indent: string): string {
+  const lines = system.split("\n");
+  return lines.map((l, i) => i === 0 ? `${indent}system: >\n${indent}  ${l}` : `${indent}  ${l}`).join("\n");
+}
+
+export function generate_default_config(preset: Preset = "anthropic"): string {
+  const cfg = PRESET_CONFIGS[preset];
   const lines = [
     "defaults:",
     "  temperature: 0.2",
@@ -155,28 +237,15 @@ export function generate_default_config(): string {
     "  # max_tool_steps: 10             # cap tool-use round-trips per agent turn",
     "",
     "agents:",
-    "  main:",
-    "    model: claude-opus-4-6",
-    "    api_key: $ANTHROPIC_API_KEY",
-    "    system: >",
-    "      You are the lead architect. You own the core vision.",
-    "      Before any peer review, define strict RFC 2119 invariants",
-    "      (MUST, SHOULD, MUST NOT). Protect these invariants across all revisions.",
-    "",
-    "  security:",
-    "    model: claude-sonnet-4-6",
-    "    api_key: $ANTHROPIC_API_KEY",
-    "    system: >",
-    "      You are a ruthless security auditor. Mutate the draft to close",
-    "      vulnerabilities, but you MUST respect the invariants.",
-    "",
-    "  cfo:",
-    "    model: claude-sonnet-4-6",
-    "    api_key: $ANTHROPIC_API_KEY",
-    "    system: >",
-    "      You are the CFO. Optimize for cost and margin,",
-    "      but you MUST respect the invariants.",
-    "",
   ];
+
+  for (const [name, agent] of Object.entries(cfg.agents)) {
+    lines.push(`  ${name}:`);
+    lines.push(`    model: ${agent.model}`);
+    lines.push(`    api_key: ${agent.api_key}`);
+    lines.push(format_yaml_system(agent.system, "    "));
+    lines.push("");
+  }
+
   return lines.join("\n");
 }

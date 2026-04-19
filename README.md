@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <code>joust draft "design a zero-downtime migration strategy for 50M rows" | pandoc -o spec.pdf</code>
+  <code>joust "design a zero-downtime migration strategy for 50M rows" | pandoc -o spec.pdf</code>
 </p>
 
 ---
@@ -20,6 +20,10 @@ strict RFC 2119 invariants (`MUST`, `SHOULD`, `MUST NOT`), and then rolls the
 draft through a gauntlet of persona-driven jousters -- security auditors, CFOs,
 DBAs, performance skeptics -- who each tear it apart and rewrite it under the
 architect's enforcement.
+
+every agent has read-only access to your project files via built-in tools
+(`read_file`, `list_files`, `search_files`). they ground their analysis in
+actual code -- no hallucinated file paths, no invented line numbers.
 
 the output is hardened by conflict. not softened by consensus.
 
@@ -42,13 +46,13 @@ invariant constraints, or get bounced.
   [main] -- seeds draft, extracts MUST/SHOULD/MUST NOT invariants
     |
     v
-  [security] -- mutates draft under invariant constraints
+  [security] -- mutates draft (has file access to your codebase)
     |
     v
-  [main] -- lints mutation, rejects or accepts
+  [main] -- lints mutation against invariants (has file access)
     |
     v
-  [cfo] -- mutates draft under invariant constraints
+  [cfo] -- mutates draft (has file access to your codebase)
     |
     v
   [main] -- lints, polishes, outputs
@@ -69,22 +73,128 @@ curl -fsSL https://raw.githubusercontent.com/ahoward/joust/main/install.sh | bas
 
 or pick a binary from the [latest release](https://github.com/ahoward/joust/releases/latest) and drop it in your `$PATH`.
 
-requires `ANTHROPIC_API_KEY` in your environment.
+### from source
+
+```bash
+git clone https://github.com/ahoward/joust.git
+cd joust
+bun install
+bun build ./src/cli.ts --compile --outfile joust
+sudo cp joust /usr/local/bin/
+```
+
+## setup
+
+joust auto-detects your API keys and picks the best preset:
+
+| env var | preset |
+|---------|--------|
+| `ANTHROPIC_API_KEY` only | `anthropic` -- opus main + sonnet jousters |
+| `GOOGLE_GENERATIVE_AI_API_KEY` only | `gemini` -- gemini-2.5-pro all agents |
+| `OPENAI_API_KEY` only | `openai` -- gpt-4o all agents |
+| multiple keys set | `mixed` -- opus main + gemini security + gpt-4o cfo |
+
+override with `--preset`: `joust --preset gemini "my prompt"`
 
 ## quick start
 
 ```bash
-# bootstrap a new architecture review
-joust init "realtime bidding engine, must handle 100k qps, no vendor lock-in"
+# just give it a prompt -- auto-detects provider, bootstraps, runs, outputs to stdout
+joust "realtime bidding engine, must handle 100k qps, no vendor lock-in"
 
-# edit the config -- swap agents, tune prompts, add invariants
-$EDITOR ./realtime-bidding-engine/rfc.yaml
-
-# let them fight
-joust run ./realtime-bidding-engine
+# or split bootstrap from execution
+joust /init "realtime bidding engine"
+$EDITOR ./realtime-bidding-engine/rfc.yaml    # edit config, swap agents, tune prompts
+joust /run ./realtime-bidding-engine           # let them fight
 
 # watch the models argue in real-time from another terminal
-joust tail ./realtime-bidding-engine
+joust /tail ./realtime-bidding-engine
+```
+
+## using joust from an AI coding agent
+
+joust is designed to be invoked from within AI coding agents like Claude Code,
+Gemini CLI, Cursor, Windsurf, Cline, etc. the `/` command syntax was designed
+for this -- it mirrors slash commands in Claude Code and similar tools.
+
+### Claude Code setup
+
+add a slash command to your project:
+
+```bash
+mkdir -p .claude/commands
+cat > .claude/commands/joust.md << 'JOUST'
+---
+allowed-tools: Bash(joust:*)
+description: Run joust — adversarial architecture compiler
+argument-hint: <prompt> or /<command> [args...]
+---
+
+Run joust as a CLI passthrough. The user's arguments are passed verbatim.
+
+Run the following command and return the full output to the user:
+
+```
+joust $ARGUMENTS 2>&1
+```
+
+Return ALL output (stdout + stderr) directly — do not summarize or truncate.
+JOUST
+```
+
+then from Claude Code:
+
+```
+/joust design a caching layer for mobile APIs
+/joust /status ./my-project/
+/joust /run ./my-project/ --tank
+```
+
+### other agents
+
+any agent that can run shell commands can use joust:
+
+```bash
+# bare prompt -- the common case
+joust "design an auth middleware for express, must support OAuth2 and API keys"
+
+# pipe output into your workflow
+joust "review src/ for security issues" > security-review.md
+```
+
+## CLI reference
+
+```
+usage:
+  joust <prompt>              bare string = bootstrap + run
+  joust /prompt <prompt>      explicit prompt (escapes prompts starting with /)
+  joust /init <prompt>        bootstrap state directory only
+  joust /run [dir]            start or resume accumulator loop
+  joust /tail [dir]           stream agent logs in real-time
+  joust /status [dir]         show current run status
+  joust /export [dir]         output latest draft to stdout
+  joust /diff [dir] [a] [b]   diff between two history steps
+  joust /plan [dir]           estimate token usage and cost
+  joust /ask [dir] <agent> <question>
+
+flags:
+  --preset <name>         agent preset (auto-detected from env by default)
+  --interactive[=N]       pause every N rounds for human feedback
+  --timebox <duration>    autonomy budget (e.g., 45m, 1h)
+  --timeout <duration>    hard kill limit
+  --tank                  unstoppable mode (backoff 429s, skip 5xx)
+
+presets:
+  anthropic               opus main + sonnet jousters
+  gemini                  gemini-2.5-pro all agents
+  openai                  gpt-4o all agents
+  mixed                   opus main + gemini security + gpt-4o cfo
+```
+
+the `/prompt` command exists for when your prompt text itself starts with `/`:
+
+```bash
+joust /prompt "/usr/local/bin must support sandboxed execution for all plugins"
 ```
 
 ## the snowball
@@ -126,7 +236,7 @@ realtime-bidding-engine/
 
 filenames use `NNN-slug.json` so `ls history/` tells the story at a glance.
 status (rejected, passed, aborted) lives inside the json, not the filename. state survives
-`kill -9` via atomic writes (`.tmp` -> `fsync` -> `rename`). `joust run` always
+`kill -9` via atomic writes (`.tmp` -> `fsync` -> `rename`). `joust /run` always
 resumes.
 
 ## config
@@ -136,6 +246,9 @@ defaults:
   temperature: 0.2
   max_retries: 3
   compaction_threshold: 10
+  max_rounds: 1
+  # workspace: .                   # default: project dir
+  # max_tool_steps: 10             # cap tool-use round-trips per agent
 
 agents:
   main:
@@ -163,21 +276,38 @@ agents:
 keys use env var expansion (`$ANTHROPIC_API_KEY`). config is re-read at every
 round boundary -- swap agents mid-flight by editing the yaml during a pause.
 
+agents have read-only file access to the project workspace (defaults to the
+directory containing `rfc.yaml`). set `workspace` in defaults to override.
+
 ## execution flags
 
 ```bash
 # human-in-the-loop: pause every 3 rounds, open $EDITOR for feedback
-joust run --interactive=3
+joust /run --interactive=3
 
 # autonomy budget: grind for 1 hour then page me
-joust run --timebox 1h
+joust /run --timebox 1h
 
 # tank mode: exponential backoff on 429s, skip dead endpoints, never crash
-joust run --tank
+joust /run --tank
 
 # combine for maximum autonomy
-joust run --timebox 1h --tank --interactive=5
+joust /run --timebox 1h --tank --interactive=5
 ```
+
+## agent tools
+
+all agents (jousters, lint, polish, compact) have read-only access to the
+project workspace via three tools:
+
+| tool | description |
+|------|-------------|
+| `read_file` | read file contents, path relative to project root |
+| `list_files` | glob match files (auto-excludes node_modules, .git) |
+| `search_files` | regex search over file contents with optional glob filter |
+
+tools are sandboxed -- path traversal and symlink escapes are blocked. agents
+cannot write files, only read them.
 
 ## unix philosophy
 

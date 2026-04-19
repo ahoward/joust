@@ -7,34 +7,43 @@ adversarial architecture compiler. LLMs don't agree — make them fight about it
 ## quick start
 
 ```bash
-joust init "design a zero-downtime migration strategy"   # bootstrap directory, pause for editing
-joust run ./zero-downtime-migration/                      # start or resume the accumulator loop
-joust tail ./zero-downtime-migration/                     # stream agent logs in real-time
-joust draft "fast api for mobile app, read-only postgres" # bootstrap + execute in one shot
+joust "design a zero-downtime migration strategy"        # bare prompt = bootstrap + run
+joust /init "fast api for mobile app, read-only postgres" # bootstrap only, pause for editing
+joust /run ./zero-downtime-migration/                     # start or resume the accumulator loop
+joust /tail ./zero-downtime-migration/                    # stream agent logs in real-time
 ```
 
 ---
 
 ## all commands
 
+commands use `/` prefix to disambiguate from bare prompts:
+
 | command | description | example |
 |---------|-------------|---------|
-| `joust init <prompt>` | bootstrap state directory, write config, pause | `joust init "mobile api"` |
-| `joust init` (no args) | open `$EDITOR` for prompt input | `joust init` |
-| `joust draft <prompt>` | bootstrap + immediately execute full loop | `joust draft "realtime bidding engine"` |
-| `joust run [dir]` | start or resume the accumulator loop | `joust run ./my-api/` |
-| `joust tail [dir]` | stream `logs/` in real-time, color-coded by agent | `joust tail ./my-api/` |
+| `joust <prompt>` | bare string = bootstrap + run | `joust "mobile api"` |
+| `joust /prompt <prompt>` | explicit prompt (escapes prompts starting with /) | `joust /prompt "/usr/local/bin..."` |
+| `joust /init <prompt>` | bootstrap state directory, write config, pause | `joust /init "mobile api"` |
+| `joust /init` (no args) | open `$EDITOR` for prompt input | `joust /init` |
+| `joust /run [dir]` | start or resume the accumulator loop | `joust /run ./my-api/` |
+| `joust /tail [dir]` | stream `logs/` in real-time, color-coded by agent | `joust /tail ./my-api/` |
+| `joust /status [dir]` | show current run status | `joust /status ./my-api/` |
+| `joust /export [dir]` | output latest draft to stdout | `joust /export ./my-api/` |
+| `joust /diff [dir] [a] [b]` | diff between two history steps | `joust /diff ./my-api/ 1 5` |
+| `joust /plan [dir]` | estimate token usage and cost | `joust /plan ./my-api/` |
+| `joust /ask [dir] <agent> <q>` | one-shot query to an agent | `joust /ask . main "why mTLS?"` |
 
 ## execution flags
 
 | flag | description |
 |------|-------------|
+| `--preset <name>` | agent preset: anthropic, gemini, openai, mixed (auto-detected from env) |
 | `--interactive[=N]` | pause for human feedback every N rounds (default 1) |
 | `--timebox <duration>` | autonomy budget — soft limit, lets inflight request finish |
 | `--timeout <duration>` | hard limit — fires AbortController on inflight requests |
 | `--tank` | unstoppable mode: backoff on 429s, skip dead endpoints, never crash |
 
-combine for maximum autonomy: `joust run --timebox 1h --tank --interactive=5`
+combine for maximum autonomy: `joust /run --timebox 1h --tank --interactive=5`
 
 ## code style
 
@@ -49,21 +58,24 @@ combine for maximum autonomy: `joust run --timebox 1h --tank --interactive=5`
 ## architecture
 
 ```
-src/cli.ts          entry point, command dispatch
-src/init.ts         bootstrap: phase 0, $EDITOR, slug generation
+src/cli.ts          entry point, /command dispatch, bare-string detection
+src/init.ts         bootstrap: phase 0, $EDITOR, slug generation, preset selection
 src/run.ts          the accumulator loop (sequential agent execution)
 src/lint.ts         invariant validation (main lints jouster output via Zod)
 src/context.ts      "attention sandwich" — compile snowball into LLM message array
 src/compact.ts      critique trail compaction (GC pass)
-src/ai.ts           vercel AI SDK wrappers (unified provider access)
-src/config.ts       YAML config loader with $ENV_VAR expansion
-src/state.ts        snowball read/write, history management
+src/ai.ts           vercel AI SDK wrappers (two-phase structured output with tools)
+src/config.ts       YAML config loader, $ENV_VAR expansion, presets, auto-detection
+src/tools.ts        sandboxed read-only file tools (read_file, list_files, search_files)
 src/utils.ts        atomic writes, slugify, file helpers
 src/tail.ts         log streaming (color-coded by agent)
-src/interactive.ts  $EDITOR integration, human intermission dashboard
+src/types.ts        all Zod schemas and TypeScript types
+src/errors.ts       error types (JoustError, JoustUserError)
+src/commands.ts     status, export, diff, plan, ask
+src/tank.ts         tank mode execution wrapper (backoff, skip)
 ```
 
-data flow: `cli.ts → config.ts (load yaml) → run.ts (loop) → context.ts (compile) → ai.ts (call) → lint.ts (validate) → state.ts (atomic write)`
+data flow: `cli.ts → config.ts (load yaml + preset) → run.ts (loop) → context.ts (compile) → ai.ts (two-phase: tools then structured output) → lint.ts (validate) → utils.ts (atomic write)`
 
 ## the snowball (state object)
 
@@ -125,6 +137,9 @@ defaults:
   temperature: 0.2
   max_retries: 3
   compaction_threshold: 10
+  max_rounds: 1
+  # workspace: .                   # default: project dir
+  # max_tool_steps: 10             # cap tool-use round-trips per agent
 
 agents:
   main:
@@ -133,13 +148,15 @@ agents:
     system: "You are the lead architect..."
   security:
     model: gemini-2.5-pro
-    api_key: $GEMINI_API_KEY
+    api_key: $GOOGLE_GENERATIVE_AI_API_KEY
     system: "You are a ruthless security auditor..."
 ```
 
 - env vars expand natively: `$ANTHROPIC_API_KEY` resolves via `process.env`
 - config is re-read at round boundaries — swap agents mid-flight by editing during a pause
 - resolution order: built-in defaults < `~/.joust/config.yaml` < `./rfc.yaml`
+- preset auto-detection: checks which API key env vars are set, picks best match
+- all agents have read-only file access to the workspace (defaults to project dir)
 
 ## testing
 
