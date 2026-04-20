@@ -241,6 +241,8 @@ export async function ask(dir: string, agent_name: string, question: string): Pr
   const response = await call_agent(agent, messages, {
     tools: workspace_tools,
     max_tool_steps: config.defaults.max_tool_steps,
+    log_dir: join(dir, "logs"),
+    log_label: `ask: ${question.slice(0, 120)}`,
   });
   write_stdout(response);
 }

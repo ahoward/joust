@@ -4,6 +4,8 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { z } from "zod";
+import { appendFileSync, mkdirSync } from "fs";
+import { join } from "path";
 import { check_context_size } from "./context";
 import type { AgentConfig } from "./types";
 
@@ -134,6 +136,50 @@ async function with_retry<T>(
   }
 }
 
+// --- per-agent log sink ---
+//
+// when a log_dir is provided, every API call writes a full pass-through
+// record of the agent's turn to <dir>/agent-<name>.log: the input messages,
+// every tool call + result, any assistant text, and the final structured
+// output. this is the raw stream from the LLM — nothing is redacted.
+
+function agent_log_path(log_dir: string, agent_name: string): string {
+  try { mkdirSync(log_dir, { recursive: true }); } catch {}
+  return join(log_dir, `agent-${agent_name}.log`);
+}
+
+function append_agent_log(log_dir: string | undefined, agent_name: string, text: string): void {
+  if (!log_dir) return;
+  try { appendFileSync(agent_log_path(log_dir, agent_name), text); } catch {}
+}
+
+function fmt_section(title: string): string {
+  const ts = new Date().toISOString();
+  return `\n===== ${ts}  ${title} =====\n`;
+}
+
+function fmt_messages(messages: Message[]): string {
+  return messages.map((m) => `--- ${m.role} ---\n${m.content}\n`).join("\n");
+}
+
+function fmt_steps(steps: any[] | undefined): string {
+  if (!steps || steps.length === 0) return "(no tool-use steps)\n";
+  const parts: string[] = [];
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    parts.push(`--- step ${i} ---`);
+    if (s.text) parts.push(`text:\n${s.text}`);
+    for (const call of s.toolCalls ?? []) {
+      parts.push(`tool_call[${call.toolName}]: ${JSON.stringify(call.input ?? call.args, null, 2)}`);
+    }
+    for (const res of s.toolResults ?? []) {
+      const out = typeof res.output === "string" ? res.output : JSON.stringify(res.output, null, 2);
+      parts.push(`tool_result[${res.toolName}]:\n${out}`);
+    }
+  }
+  return parts.join("\n") + "\n";
+}
+
 // --- message types ---
 
 export interface Message {
@@ -141,18 +187,34 @@ export interface Message {
   content: string;
 }
 
+export interface CallOptions {
+  signal?: AbortSignal;
+  tools?: ToolSet;
+  max_tool_steps?: number;
+  log_dir?: string;       // per-agent log directory (usually <state-dir>/logs)
+  log_label?: string;     // section label (e.g. "step 3 attempt 1" or "bootstrap")
+}
+
 // --- text generation ---
 
 export async function call_agent(
   agent: AgentConfig,
   messages: Message[],
-  options?: { signal?: AbortSignal; tools?: ToolSet; max_tool_steps?: number }
+  options?: CallOptions
 ): Promise<string> {
   const model = get_model(agent);
   check_context_size(agent.model, messages);
 
   const system_msgs = messages.filter((m) => m.role === "system");
   const non_system = messages.filter((m) => m.role !== "system");
+  const label = options?.log_label ?? "call";
+
+  append_agent_log(
+    options?.log_dir,
+    agent.name,
+    fmt_section(`${label} — call_agent (model=${agent.model})`) +
+      fmt_messages(messages)
+  );
 
   const stop_progress = start_progress_timer(`[${agent.name}]`);
   try {
@@ -174,7 +236,22 @@ export async function call_agent(
       })
     );
 
+    append_agent_log(
+      options?.log_dir,
+      agent.name,
+      fmt_section(`${label} — response`) +
+        fmt_steps((result as any).steps) +
+        `--- final text ---\n${result.text}\n`
+    );
+
     return result.text;
+  } catch (err) {
+    append_agent_log(
+      options?.log_dir,
+      agent.name,
+      fmt_section(`${label} — ERROR`) + String((err as any)?.stack ?? err) + "\n"
+    );
+    throw err;
   } finally {
     stop_progress();
   }
@@ -192,7 +269,7 @@ export async function call_agent_structured<T>(
   agent: AgentConfig,
   messages: Message[],
   schema: z.ZodType<T>,
-  options?: { signal?: AbortSignal; tools?: ToolSet; max_tool_steps?: number }
+  options?: CallOptions
 ): Promise<T> {
   const model = get_model(agent);
   check_context_size(agent.model, messages);
@@ -204,6 +281,16 @@ export async function call_agent_structured<T>(
     role: m.role as "user" | "assistant",
     content: m.content,
   }));
+
+  const label = options?.log_label ?? "call";
+  const log_dir = options?.log_dir;
+
+  append_agent_log(
+    log_dir,
+    agent.name,
+    fmt_section(`${label} — call_agent_structured (model=${agent.model}, tools=${!!options?.tools})`) +
+      fmt_messages(messages)
+  );
 
   const stop_progress = start_progress_timer(`[${agent.name}]`);
   try {
@@ -220,6 +307,14 @@ export async function call_agent_structured<T>(
           tools: options!.tools,
           stopWhen: [isLoopFinished()],
         })
+      );
+
+      append_agent_log(
+        log_dir,
+        agent.name,
+        fmt_section(`${label} — phase 1 (tool use)`) +
+          fmt_steps((research as any).steps) +
+          `--- phase 1 text ---\n${research.text}\n`
       );
 
       // build phase 2 messages — include research text if non-empty
@@ -262,6 +357,13 @@ export async function call_agent_structured<T>(
         })
       );
 
+      append_agent_log(
+        log_dir,
+        agent.name,
+        fmt_section(`${label} — phase 2 (structured output)`) +
+          JSON.stringify(result.object, null, 2) + "\n"
+      );
+
       return result.object;
     }
 
@@ -278,7 +380,21 @@ export async function call_agent_structured<T>(
       })
     );
 
+    append_agent_log(
+      log_dir,
+      agent.name,
+      fmt_section(`${label} — structured output`) +
+        JSON.stringify(result.object, null, 2) + "\n"
+    );
+
     return result.object;
+  } catch (err) {
+    append_agent_log(
+      log_dir,
+      agent.name,
+      fmt_section(`${label} — ERROR`) + String((err as any)?.stack ?? err) + "\n"
+    );
+    throw err;
   } finally {
     stop_progress();
   }

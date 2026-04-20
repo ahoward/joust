@@ -12,7 +12,6 @@ import {
   writeSync,
 } from "fs";
 import { join, resolve } from "path";
-import { parse as parse_yaml } from "yaml";
 import { HistoryEntrySchema } from "./types";
 import type { HistoryEntry, Snowball } from "./types";
 
@@ -82,7 +81,7 @@ export function ensure_dir(path: string): void {
 
 export function load_config(path: string): unknown {
   const text = readFileSync(path, "utf-8");
-  return parse_yaml(text); // no env expansion here — happens only on api_key fields in config.ts
+  return JSON.parse(text); // no env expansion here — happens only on api_key fields in config.ts
 }
 
 // --- history scanning ---
@@ -172,7 +171,7 @@ export function commit_state(
 
 export function append_log(dir: string, log_name: string, text: string): void {
   const log_path = join(dir, "logs", log_name);
-  appendFileSync(log_path, scrub_keys(text));
+  appendFileSync(log_path, text);
 }
 
 // --- lockfile ---
@@ -210,36 +209,6 @@ export function release_lock(dir: string): void {
 
 function is_process_alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
-}
-
-// --- key scrubbing (defense-in-depth) ---
-// order matters: sk-ant- must match before sk- to avoid partial matches
-
-const KEY_PATTERNS = [
-  /sk-ant-[a-zA-Z0-9\-_]{20,}/g,
-  /sk-[a-zA-Z0-9\-_]{20,}/g,
-  /AIza[a-zA-Z0-9\-_]{20,}/g,
-];
-
-export function scrub_keys(text: string): string {
-  return KEY_PATTERNS.reduce((t, pat) => t.replace(pat, "[REDACTED]"), text);
-}
-
-// --- object-level redaction (complements scrub_keys for config serialization) ---
-
-const SENSITIVE_KEYS = new Set([
-  "api_key", "apiKey", "apikey",
-  "token", "secret", "password",
-  "authorization", "Authorization",
-]);
-
-export function redact(obj: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(obj).map(([k, v]) => [
-      k,
-      SENSITIVE_KEYS.has(k) ? "[REDACTED]" : v,
-    ])
-  );
 }
 
 // --- colors ---
@@ -280,7 +249,8 @@ function agent_color(name: string): string {
 // log() and log_status() always go to stderr.
 // when a run dir is set, they also tee to <dir>/logs/stderr.txt.
 // write_stdout() goes to stdout and tees to <dir>/logs/stdout.txt.
-// log files always get plain text (no ANSI codes).
+// log files always get plain text (no ANSI codes). nothing is redacted —
+// logs are a pass-through of what actually happened.
 
 let _log_dir: string | null = null;
 
@@ -294,51 +264,45 @@ function strip_ansi(text: string): string {
 }
 
 export function log(msg: string): void {
-  const scrubbed = scrub_keys(msg);
-  process.stderr.write(`${scrubbed}\n`);
+  process.stderr.write(`${msg}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${strip_ansi(scrubbed)}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${strip_ansi(msg)}\n`); } catch {}
   }
 }
 
 export function log_status(agent: string, action: string): void {
   const color = agent_color(agent);
-  const scrubbed = scrub_keys(action);
-  process.stderr.write(`${color}${C.bold}[${agent}]${C.reset} ${scrubbed}\n`);
+  process.stderr.write(`${color}${C.bold}[${agent}]${C.reset} ${action}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `[${agent}] ${scrubbed}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `[${agent}] ${action}\n`); } catch {}
   }
 }
 
 export function log_header(msg: string): void {
-  const scrubbed = scrub_keys(msg);
-  process.stderr.write(`\n${C.bold}${scrubbed}${C.reset}\n\n`);
+  process.stderr.write(`\n${C.bold}${msg}${C.reset}\n\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `\n${scrubbed}\n\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `\n${msg}\n\n`); } catch {}
   }
 }
 
 export function log_success(msg: string): void {
-  const scrubbed = scrub_keys(msg);
-  process.stderr.write(`${C.green}${scrubbed}${C.reset}\n`);
+  process.stderr.write(`${C.green}${msg}${C.reset}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${scrubbed}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${msg}\n`); } catch {}
   }
 }
 
 export function log_warn(msg: string): void {
-  const scrubbed = scrub_keys(msg);
-  process.stderr.write(`${C.yellow}${scrubbed}${C.reset}\n`);
+  process.stderr.write(`${C.yellow}${msg}${C.reset}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${scrubbed}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${msg}\n`); } catch {}
   }
 }
 
 export function log_error(msg: string): void {
-  const scrubbed = scrub_keys(msg);
-  process.stderr.write(`${C.red}${scrubbed}${C.reset}\n`);
+  process.stderr.write(`${C.red}${msg}${C.reset}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${scrubbed}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${msg}\n`); } catch {}
   }
 }
 

@@ -12,7 +12,7 @@ export async function maybe_compact(
   main: AgentConfig,
   snowball: Snowball,
   threshold: number,
-  options?: { signal?: AbortSignal; tools?: ToolSet; max_tool_steps?: number }
+  options?: { signal?: AbortSignal; tools?: ToolSet; max_tool_steps?: number; log_dir?: string; log_label?: string }
 ): Promise<Snowball> {
   if (snowball.critique_trail.length < threshold) return snowball;
 
@@ -23,6 +23,8 @@ export async function maybe_compact(
     signal: options?.signal,
     tools: options?.tools,
     max_tool_steps: options?.max_tool_steps,
+    log_dir: options?.log_dir,
+    log_label: options?.log_label ?? "compact",
   });
 
   log_status("main", "compaction complete");

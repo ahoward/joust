@@ -257,6 +257,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             signal,
             tools: workspace_tools,
             max_tool_steps,
+            log_dir: join(dir, "logs"),
+            log_label: `round ${round} step ${step} attempt ${attempts}`,
           });
         };
 
@@ -275,11 +277,11 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             mutation = await execute_mutation();
           }
 
-          append_log(dir, `agent-${jouster.name}.log`, `\n--- step ${step} attempt ${attempts} ---\n${mutation.critique}\n`);
-
           const execute_lint = async () => lint_mutation(main, snowball, mutation!.draft, {
             tools: workspace_tools,
             max_tool_steps,
+            log_dir: join(dir, "logs"),
+            log_label: `round ${round} step ${step} lint (by main, target ${jouster.name})`,
           });
           let lint;
           if (options.tank) {
@@ -360,18 +362,16 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
                     signal: abort_controller.signal,
                     tools: workspace_tools,
                     max_tool_steps,
+                    log_dir: join(dir, "logs"),
+                    log_label: `round ${round} step ${step} summoned by ${jouster.name} — ask: ${ask.slice(0, 120)}`,
                   }
-                );
-
-                append_log(
-                  dir,
-                  `agent-${specialist_name}.log`,
-                  `\n--- step ${step} summoned by ${jouster.name} ---\nask: ${ask}\n\n${spec_mutation.critique}\n`
                 );
 
                 const spec_lint = await lint_mutation(main, snowball, spec_mutation.draft, {
                   tools: workspace_tools,
                   max_tool_steps,
+                  log_dir: join(dir, "logs"),
+                  log_label: `round ${round} step ${step} lint (specialist ${specialist_name})`,
                 });
 
                 if (spec_lint.valid) {
@@ -514,6 +514,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           signal: abort_controller.signal,
           tools: workspace_tools,
           max_tool_steps,
+          log_dir: join(dir, "logs"),
+          log_label: `round ${round} compact`,
         }
       );
       const compacted = options.tank
@@ -551,6 +553,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           signal: abort_controller.signal,
           tools: workspace_tools,
           max_tool_steps,
+          log_dir: join(dir, "logs"),
+          log_label: `round ${round} polish`,
         });
       };
 
@@ -562,6 +566,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           const polish_lint = await lint_mutation(main, snowball, polish.draft, {
             tools: workspace_tools,
             max_tool_steps,
+            log_dir: join(dir, "logs"),
+            log_label: `round ${round} polish lint`,
           });
           if (!polish_lint.valid) {
             log_warn(`[main] polish violated invariants: ${polish_lint.violations.join("; ")}`);

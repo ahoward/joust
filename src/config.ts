@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
-import { load_config, redact, to_json } from "./utils";
+import { load_config, to_json } from "./utils";
 import { JoustError } from "./errors";
 import type { JoustConfig, AgentConfig, JoustDefaults, SpecialistName } from "./types";
 import { SPECIALIST_NAMES } from "./types";
@@ -50,7 +50,7 @@ function expand_agent_config(name: string, raw: Record<string, any>, defaults: J
   if (!raw_key.startsWith("$")) {
     throw new JoustError(
       `agent '${name}' api_key must be an env var reference like $ANTHROPIC_API_KEY, got literal string. ` +
-      `Never put raw API keys in config files. (config: ${to_json(redact(raw as Record<string, unknown>))})`
+      `Never put raw API keys in config files.`
     );
   }
 
@@ -72,8 +72,8 @@ export function resolve_config(project_dir?: string): JoustConfig {
     merged_agents[name] = { ...agent };
   }
 
-  // layer 2: user global config (~/.joust/config.yaml)
-  const global_path = join(homedir(), ".joust", "config.yaml");
+  // layer 2: user global config (~/.joust/config.json)
+  const global_path = join(homedir(), ".joust", "config.json");
   if (existsSync(global_path)) {
     const global_cfg = load_config(global_path) as any;
     if (global_cfg?.defaults) {
@@ -84,11 +84,11 @@ export function resolve_config(project_dir?: string): JoustConfig {
     }
   }
 
-  // layer 3: project config (rfc.yaml)
+  // layer 3: project config (config.json)
   // if project defines agents, it REPLACES the built-in set (not merge).
   // the user is being explicit about their panel.
   if (project_dir) {
-    const project_path = join(project_dir, "rfc.yaml");
+    const project_path = join(project_dir, "config.json");
     if (existsSync(project_path)) {
       const project_cfg = load_config(project_path) as any;
       if (project_cfg?.defaults) {
@@ -341,51 +341,49 @@ const SYSTEM_PEER =
   "question. Do not summon for routine concerns — only when the question\n" +
   "genuinely warrants a specialist's eye.";
 
-function format_yaml_system(system: string, indent: string): string {
-  const lines = system.split("\n");
-  return lines.map((l, i) => i === 0 ? `${indent}system: >\n${indent}  ${l}` : `${indent}  ${l}`).join("\n");
-}
-
-// generate_default_config emits rfc.yaml with the default panel (main + peer).
-// Specialists are listed commented out — users can uncomment to pin one as a
-// permanent panel member, or leave them available via summon only.
+// generate_default_config emits config.json with the default panel
+// (main + peer). The `specialist_pool` block is informational only — a hint
+// showing what the lead architects can summon on demand. To pin a specialist
+// as a permanent panel member, move its entry into `agents`.
 export function generate_default_config(preset: Preset = "mixed"): string {
   const cfg = PRESET_CONFIGS[preset];
 
-  const lines = [
-    "defaults:",
-    "  temperature: 0.2",
-    "  max_retries: 3",
-    "  compaction_threshold: 10",
-    "  max_rounds: 1",
-    "  # workspace: .                   # default: project dir. set to override",
-    "  # max_tool_steps: 10             # cap tool-use round-trips per agent turn",
-    "",
-    "agents:",
-    "  main:",
-    `    model: ${cfg.main.model}`,
-    `    api_key: ${cfg.main.api_key}`,
-    format_yaml_system(SYSTEM_PEER, "    "),
-    "",
-    "  peer:",
-    `    model: ${cfg.peer.model}`,
-    `    api_key: ${cfg.peer.api_key}`,
-    format_yaml_system(SYSTEM_PEER, "    "),
-    "",
-    "# specialist pool — summoned on demand by main or peer with a scoped `ask`.",
-    "# uncomment any of these to pin them as permanent panel members instead.",
-    "# (model/api_key default to the peer provider; override as needed.)",
-  ];
-
+  const specialist_pool: Record<string, unknown> = {};
   for (const spec of SPECIALISTS) {
-    lines.push(`# ${spec.name}: ${spec.summary}`);
-    lines.push(`#   ${spec.name}:`);
-    lines.push(`#     model: ${cfg.peer.model}`);
-    lines.push(`#     api_key: ${cfg.peer.api_key}`);
-    const indented = format_yaml_system(spec.system, "#     ");
-    lines.push(indented);
-    lines.push("");
+    specialist_pool[spec.name] = {
+      summary: spec.summary,
+      model: cfg.peer.model,
+      api_key: cfg.peer.api_key,
+      system: spec.system,
+    };
   }
 
-  return lines.join("\n");
+  const config = {
+    defaults: {
+      temperature: 0.2,
+      max_retries: 3,
+      compaction_threshold: 10,
+      max_rounds: 1,
+      // workspace: ".",             // default: project dir. set to override
+      // max_tool_steps: 10,         // cap tool-use round-trips per agent turn
+    },
+    agents: {
+      main: {
+        model: cfg.main.model,
+        api_key: cfg.main.api_key,
+        system: SYSTEM_PEER,
+      },
+      peer: {
+        model: cfg.peer.model,
+        api_key: cfg.peer.api_key,
+        system: SYSTEM_PEER,
+      },
+    },
+    // informational — specialists summoned on demand by main or peer with a
+    // scoped `ask`. move an entry into `agents` to pin it as a permanent
+    // panel member. the loader ignores this block.
+    specialist_pool,
+  };
+
+  return to_json(config);
 }

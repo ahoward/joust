@@ -104,7 +104,7 @@ joust "realtime bidding engine, must handle 100k qps, no vendor lock-in"
 
 # or split bootstrap from execution
 joust /init "realtime bidding engine"
-$EDITOR .joust/realtime-bidding-engine/rfc.yaml    # edit config, swap agents, tune prompts
+$EDITOR .joust/realtime-bidding-engine/config.json # edit config, swap agents, tune prompts
 joust /run .joust/realtime-bidding-engine           # let them fight
 
 # watch the models argue in real-time from another terminal
@@ -223,18 +223,19 @@ patches. structural integrity over token golfing.
 
 ```
 .joust/2026-04-20--realtime-bidding-engine/
-  rfc.yaml              # your config. edit between rounds.
+  config.json           # your config. edit between rounds. pretty JSON.
   snowball.json         # current state (pretty json, atomic copy)
   history/              # append-only immutable ledger
     000-main.json       # seed
     001-peer.json       # peer pass
     002-security.json   # specialist pass (if summoned)
-  logs/                 # per-agent logs, teed from terminal
-    stderr.txt          # full stderr capture
-    stdout.txt          # full stdout capture (final draft)
-    execution.log
-    agent-peer.log
-    agent-security.log
+  logs/                 # per-agent + system logs
+    stderr.txt          # full stderr capture (what you saw in the terminal)
+    stdout.txt          # full stdout capture (final draft bytes)
+    execution.log       # system events
+    agent-main.log      # raw pass-through of every main API call (prompt, tool calls, output)
+    agent-peer.log      # same, for peer
+    agent-security.log  # same, for any specialist summoned this run
 ```
 
 filenames use `NNN-slug.json` so `ls history/` tells the story at a glance.
@@ -244,43 +245,39 @@ resumes.
 
 ## config
 
-```yaml
-defaults:
-  temperature: 0.2
-  max_retries: 3
-  compaction_threshold: 10
-  max_rounds: 1
-  # workspace: .                   # default: project dir
-  # max_tool_steps: 10             # cap tool-use round-trips per agent
-
-agents:
-  main:
-    model: claude-opus-4-6
-    api_key: $ANTHROPIC_API_KEY
-    system: >
-      You are the lead architect. Define and enforce
-      strict RFC 2119 invariants across all revisions.
-
-  security:
-    model: claude-sonnet-4-6
-    api_key: $ANTHROPIC_API_KEY
-    system: >
-      You are a ruthless security auditor. Close every
-      hole, but respect the architect's invariants.
-
-  cfo:
-    model: claude-sonnet-4-6
-    api_key: $ANTHROPIC_API_KEY
-    system: >
-      You are the CFO. Optimize for cost and margin,
-      but respect the architect's invariants.
+```json
+{
+  "defaults": {
+    "temperature": 0.2,
+    "max_retries": 3,
+    "compaction_threshold": 10,
+    "max_rounds": 1
+  },
+  "agents": {
+    "main": {
+      "model": "claude-opus-4-6",
+      "api_key": "$ANTHROPIC_API_KEY",
+      "system": "You are the lead architect. Define and enforce strict RFC 2119 invariants across all revisions."
+    },
+    "peer": {
+      "model": "gemini-2.5-pro",
+      "api_key": "$GOOGLE_GENERATIVE_AI_API_KEY",
+      "system": "You are a senior lead architect. Own the vision. Summon specialists when warranted."
+    }
+  }
+}
 ```
 
 keys use env var expansion (`$ANTHROPIC_API_KEY`). config is re-read at every
-round boundary -- swap agents mid-flight by editing the yaml during a pause.
+round boundary -- swap agents mid-flight by editing the file during a pause.
+
+the generated default also writes a `specialist_pool` block below `agents` --
+that's informational, showing what main/peer can summon (security, cfo, dba,
+perf, ux, legal). move an entry into `agents` to pin it as a permanent panel
+member.
 
 agents have read-only file access to the project workspace (defaults to the
-directory containing `rfc.yaml`). set `workspace` in defaults to override.
+directory containing `config.json`). set `workspace` in defaults to override.
 
 ## execution flags
 

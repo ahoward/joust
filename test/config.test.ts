@@ -135,32 +135,37 @@ describe("specialist pool", () => {
 });
 
 describe("generate_default_config", () => {
-  test("default panel is main + peer (no specialists inline)", () => {
-    const yaml = generate_default_config("mixed");
-    // main and peer as live agents
-    expect(yaml).toMatch(/^  main:/m);
-    expect(yaml).toMatch(/^  peer:/m);
-    // specialists only as commented pool, not live agents
-    expect(yaml).not.toMatch(/^  security:/m);
-    expect(yaml).not.toMatch(/^  cfo:/m);
-    expect(yaml).toContain("# specialist pool");
+  test("default panel is main + peer, specialists live only in specialist_pool", () => {
+    const cfg = JSON.parse(generate_default_config("mixed"));
+    expect(cfg.agents.main).toBeDefined();
+    expect(cfg.agents.peer).toBeDefined();
+    expect(cfg.agents.security).toBeUndefined();
+    expect(cfg.agents.cfo).toBeUndefined();
+    expect(cfg.specialist_pool.security).toBeDefined();
+    expect(cfg.specialist_pool.cfo).toBeDefined();
   });
 
   test("mixed preset uses claude + gemini (two companies)", () => {
-    const yaml = generate_default_config("mixed");
-    expect(yaml).toContain("claude-opus-4-6");
-    expect(yaml).toContain("gemini-2.5-pro");
-    expect(yaml).toContain("$ANTHROPIC_API_KEY");
-    expect(yaml).toContain("$GOOGLE_GENERATIVE_AI_API_KEY");
+    const cfg = JSON.parse(generate_default_config("mixed"));
+    expect(cfg.agents.main.model).toBe("claude-opus-4-6");
+    expect(cfg.agents.peer.model).toBe("gemini-2.5-pro");
+    expect(cfg.agents.main.api_key).toBe("$ANTHROPIC_API_KEY");
+    expect(cfg.agents.peer.api_key).toBe("$GOOGLE_GENERATIVE_AI_API_KEY");
   });
 
-  test("all preset yamls are valid for all four presets", () => {
+  test("all preset configs are valid JSON for all four presets", () => {
     for (const preset of ["anthropic", "gemini", "openai", "mixed"] as const) {
-      const yaml = generate_default_config(preset);
-      expect(yaml).toContain("agents:");
-      expect(yaml).toContain("main:");
-      expect(yaml).toContain("peer:");
+      const cfg = JSON.parse(generate_default_config(preset));
+      expect(cfg.defaults).toBeDefined();
+      expect(cfg.agents.main).toBeDefined();
+      expect(cfg.agents.peer).toBeDefined();
     }
+  });
+
+  test("output is pretty-printed (human-editable)", () => {
+    const text = generate_default_config("mixed");
+    expect(text).toContain("\n");
+    expect(text).toContain("  ");
   });
 });
 

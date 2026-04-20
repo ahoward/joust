@@ -8,7 +8,7 @@ export async function lint_mutation(
   main_agent: AgentConfig,
   snowball: Snowball,
   mutated_draft: string,
-  options?: { tools?: ToolSet; max_tool_steps?: number }
+  options?: { tools?: ToolSet; max_tool_steps?: number; log_dir?: string; log_label?: string }
 ): Promise<LintResult> {
   log_status("main", "linting mutation against invariants...");
 
@@ -20,6 +20,8 @@ export async function lint_mutation(
   const result = await call_agent_structured(main_agent, messages, LintResultSchema, {
     tools: options?.tools,
     max_tool_steps: options?.max_tool_steps,
+    log_dir: options?.log_dir,
+    log_label: options?.log_label ?? "lint",
   });
 
   // MUST violations are hard failures

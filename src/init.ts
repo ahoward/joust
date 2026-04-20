@@ -101,12 +101,22 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
     human_directives: [],
   };
 
+  // create state directory first so the bootstrap call can tee its full
+  // prompt / tool calls / output into logs/agent-main.log.
+  const slug = slugify(prompt);
+  const dir = resolve(".joust", slug);
+  ensure_dir(dir);
+  ensure_dir(join(dir, "history"));
+  set_log_dir(dir);
+
   // call main to bootstrap: expand prompt into draft + invariants
   log_status("main", `expanding prompt into draft + invariants (workspace: ${bootstrap_workspace})...`);
   const context = compile_context(main, seed_snowball, "bootstrap", { has_tools: true });
   const result = await call_agent_structured(main, context, BootstrapResultSchema, {
     tools: workspace_tools,
     max_tool_steps,
+    log_dir: join(dir, "logs"),
+    log_label: "bootstrap",
   });
 
   // build the real snowball
@@ -118,17 +128,10 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
     human_directives: [],
   };
 
-  // create state directory under .joust/
-  const slug = slugify(prompt);
-  const dir = resolve(".joust", slug);
-  ensure_dir(dir);
-  ensure_dir(join(dir, "history"));
-  set_log_dir(dir);
-
   // write config snapshot — auto-detect preset from env if not specified
   const effective_preset = preset ?? detect_preset();
   log(`preset: ${effective_preset}`);
-  write_atomic(join(dir, "rfc.yaml"), generate_default_config(effective_preset));
+  write_atomic(join(dir, "config.json"), generate_default_config(effective_preset) + "\n");
 
   // write seed history entry
   const entry: HistoryEntry = {
@@ -144,7 +147,7 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
 
   // log summary
   log(`\ncreated: ${dir}/`);
-  log(`  rfc.yaml            config (edit before running)`);
+  log(`  config.json         config (edit before running)`);
   log(`  snowball.json       current state`);
   log(`  history/000-main.json  seed`);
   log(`\ninvariants:`);

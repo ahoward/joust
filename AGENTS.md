@@ -99,20 +99,25 @@ data flow: `cli.ts → config.ts (load yaml + preset) → run.ts (loop) → cont
 
 ```
 .joust/<dated-slug>/
-  rfc.yaml              human-editable config (panel, keys, limits). re-read per round.
+  config.json           human-editable config (panel, keys, limits). re-read per round. pretty JSON.
   snowball.json         current working state (pretty JSON, bomber atomic copy)
   history/              append-only immutable ledger
     000-main.json       seed (main bootstrap)
     001-peer.json       peer pass
     002-security.json   specialist pass (if summoned)
-  logs/                 per-agent logs, teed from terminal
-    stderr.txt          full stderr capture
-    stdout.txt          full stdout capture (final draft)
-    execution.log       system events (retries, timeouts, kills)
-    agent-main.log      raw critique stream from main
-    agent-peer.log      raw critique stream from peer
-    agent-security.log  specialist critique (if summoned)
+  logs/                 per-agent + system logs
+    stderr.txt          full stderr capture (what the human saw in the terminal)
+    stdout.txt          full stdout capture (final draft bytes)
+    execution.log       system events (retries, timeouts, kills, tank skips)
+    agent-main.log      raw pass-through of every main API call — prompt, tool calls, tool results, final output
+    agent-peer.log      same, for peer
+    agent-security.log  same, for any specialist summoned this run
 ```
+
+per-agent logs are a full pass-through of every LLM turn: the exact
+prompt/messages sent, every tool call and tool result (full text), assistant
+text, and the final structured output. nothing is redacted. if an agent
+returned a bad response, the raw bytes are there to prove it.
 
 rules:
 - filenames use `NNN-slug.json` where slug is the agent name from config
@@ -133,31 +138,35 @@ context compilation uses the "attention sandwich":
 - **middle** (user/assistant turns): critique trail as pseudo-conversation
 - **bottom** (final user msg): current draft to mutate (recency bias)
 
-## config format (rfc.yaml)
+## config format (config.json)
 
-```yaml
-defaults:
-  temperature: 0.2
-  max_retries: 3
-  compaction_threshold: 10
-  max_rounds: 1
-  # workspace: .                   # default: project dir
-  # max_tool_steps: 10             # cap tool-use round-trips per agent
-
-agents:
-  main:
-    model: claude-opus-4-6
-    api_key: $ANTHROPIC_API_KEY
-    system: "You are the lead architect..."
-  security:
-    model: gemini-2.5-pro
-    api_key: $GOOGLE_GENERATIVE_AI_API_KEY
-    system: "You are a ruthless security auditor..."
+```json
+{
+  "defaults": {
+    "temperature": 0.2,
+    "max_retries": 3,
+    "compaction_threshold": 10,
+    "max_rounds": 1
+  },
+  "agents": {
+    "main": {
+      "model": "claude-opus-4-6",
+      "api_key": "$ANTHROPIC_API_KEY",
+      "system": "You are the lead architect..."
+    },
+    "peer": {
+      "model": "gemini-2.5-pro",
+      "api_key": "$GOOGLE_GENERATIVE_AI_API_KEY",
+      "system": "You are a senior lead architect..."
+    }
+  }
+}
 ```
 
 - env vars expand natively: `$ANTHROPIC_API_KEY` resolves via `process.env`
 - config is re-read at round boundaries — swap agents mid-flight by editing during a pause
-- resolution order: built-in defaults < `~/.joust/config.yaml` < `./rfc.yaml`
+- resolution order: built-in defaults < `~/.joust/config.json` < `./config.json`
+- the generated default also includes a `specialist_pool` block — informational, used by main/peer when they summon a specialist. move an entry into `agents` to pin it as a permanent panel member.
 - preset auto-detection: checks which API key env vars are set, picks best match
 - all agents have read-only file access to the workspace (defaults to project dir)
 
