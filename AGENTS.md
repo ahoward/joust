@@ -98,19 +98,20 @@ data flow: `cli.ts → config.ts (load yaml + preset) → run.ts (loop) → cont
 ## state directory layout
 
 ```
-.joust/<project-slug>/
-  rfc.yaml              human-editable config (personas, keys, limits). re-read per round.
+.joust/<dated-slug>/
+  rfc.yaml              human-editable config (panel, keys, limits). re-read per round.
   snowball.json         current working state (pretty JSON, bomber atomic copy)
-  stderr.log            full stderr capture (teed from terminal)
-  stdout.log            full stdout capture (teed from terminal)
   history/              append-only immutable ledger
     000-main.json       seed (main bootstrap)
-    001-security.json   security pass
-    002-cfo.json        cfo pass
-  logs/                 per-agent logs
+    001-peer.json       peer pass
+    002-security.json   specialist pass (if summoned)
+  logs/                 per-agent logs, teed from terminal
+    stderr.txt          full stderr capture
+    stdout.txt          full stdout capture (final draft)
     execution.log       system events (retries, timeouts, kills)
-    agent-main.log      raw token stream from main
-    agent-security.log
+    agent-main.log      raw critique stream from main
+    agent-peer.log      raw critique stream from peer
+    agent-security.log  specialist critique (if summoned)
 ```
 
 rules:

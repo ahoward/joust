@@ -3,6 +3,7 @@ import { join, resolve } from "path";
 import { tmpdir } from "os";
 import { call_agent_structured } from "./ai";
 import { compile_context } from "./context";
+import { create_workspace_tools } from "./tools";
 import { resolve_config, get_main_agent, generate_default_config, detect_preset, type Preset } from "./config";
 import {
   slugify,
@@ -84,6 +85,13 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
   const config = resolve_config();
   const main = get_main_agent(config);
 
+  // give bootstrap access to the cwd as workspace — without this, main has to
+  // guess at the codebase and invents invariants for the wrong stack (e.g.
+  // Ruby gemspec invariants for a Bun/TS project).
+  const bootstrap_workspace = process.cwd();
+  const workspace_tools = create_workspace_tools(bootstrap_workspace);
+  const max_tool_steps = config.defaults.max_tool_steps;
+
   // create empty snowball with the prompt as the draft
   const seed_snowball: Snowball = {
     invariants: { MUST: [], SHOULD: [], MUST_NOT: [] },
@@ -94,9 +102,12 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
   };
 
   // call main to bootstrap: expand prompt into draft + invariants
-  log_status("main", "expanding prompt into draft + invariants...");
-  const context = compile_context(main, seed_snowball, "bootstrap");
-  const result = await call_agent_structured(main, context, BootstrapResultSchema);
+  log_status("main", `expanding prompt into draft + invariants (workspace: ${bootstrap_workspace})...`);
+  const context = compile_context(main, seed_snowball, "bootstrap", { has_tools: true });
+  const result = await call_agent_structured(main, context, BootstrapResultSchema, {
+    tools: workspace_tools,
+    max_tool_steps,
+  });
 
   // build the real snowball
   const snowball: Snowball = {

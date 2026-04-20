@@ -222,17 +222,18 @@ patches. structural integrity over token golfing.
 ## the filesystem is the database
 
 ```
-.joust/realtime-bidding-engine/
+.joust/2026-04-20--realtime-bidding-engine/
   rfc.yaml              # your config. edit between rounds.
   snowball.json         # current state (pretty json, atomic copy)
-  stderr.log            # full stderr capture (teed from terminal)
-  stdout.log            # full stdout capture (teed from terminal)
   history/              # append-only immutable ledger
     000-main.json       # seed
-    001-security.json   # security pass
-    002-cfo.json        # cfo pass
-  logs/                 # per-agent logs
+    001-peer.json       # peer pass
+    002-security.json   # specialist pass (if summoned)
+  logs/                 # per-agent logs, teed from terminal
+    stderr.txt          # full stderr capture
+    stdout.txt          # full stdout capture (final draft)
     execution.log
+    agent-peer.log
     agent-security.log
 ```
 

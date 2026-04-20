@@ -638,7 +638,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
     log(`steps: ${step} | invariants: ${must_count} MUST, ${should_count} SHOULD, ${must_not_count} MUST NOT`);
     log(`draft: ${word_count} words | critiques: ${trail_count} | elapsed: ${elapsed_str}`);
 
-    // final output to STDOUT (teed to stdout.log)
+    // final output to STDOUT (teed to logs/stdout.txt)
     write_stdout(snowball.draft);
   }
   } finally {

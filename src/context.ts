@@ -80,16 +80,22 @@ export function compile_context(
 
   // --- TOP: system message ---
   if (role === "bootstrap") {
-    messages.push({
-      role: "system",
-      content: [
-        agent.system,
+    const boot_lines = [
+      agent.system,
+      "",
+      "You are bootstrapping a new architecture. The user will give you a raw prompt.",
+      "Expand it into a comprehensive initial draft and extract strict RFC 2119 invariants.",
+      "Output as structured JSON with `invariants` (MUST, SHOULD, MUST_NOT arrays) and `draft` (markdown string).",
+    ];
+    if (options?.has_tools) {
+      boot_lines.push(
         "",
-        "You are bootstrapping a new architecture. The user will give you a raw prompt.",
-        "Expand it into a comprehensive initial draft and extract strict RFC 2119 invariants.",
-        "Output as structured JSON with `invariants` (MUST, SHOULD, MUST_NOT arrays) and `draft` (markdown string).",
-      ].join("\n"),
-    });
+        "You have tools to read files from the project workspace. When the prompt references",
+        "this codebase, use the tools to inspect actual files before drafting invariants or",
+        "the seed draft. Do not assume language, framework, or ecosystem — read the code.",
+      );
+    }
+    messages.push({ role: "system", content: boot_lines.join("\n") });
   } else if (role === "lint") {
     const lint_lines = [
       "You are the lead architect reviewing a jouster's mutation.",

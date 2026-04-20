@@ -278,8 +278,8 @@ function agent_color(name: string): string {
 
 // --- tee logging ---
 // log() and log_status() always go to stderr.
-// when a run dir is set, they also tee to <dir>/stderr.log.
-// write_stdout() goes to stdout and tees to <dir>/stdout.log.
+// when a run dir is set, they also tee to <dir>/logs/stderr.txt.
+// write_stdout() goes to stdout and tees to <dir>/logs/stdout.txt.
 // log files always get plain text (no ANSI codes).
 
 let _log_dir: string | null = null;
@@ -297,7 +297,7 @@ export function log(msg: string): void {
   const scrubbed = scrub_keys(msg);
   process.stderr.write(`${scrubbed}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "stderr.log"), `${strip_ansi(scrubbed)}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${strip_ansi(scrubbed)}\n`); } catch {}
   }
 }
 
@@ -306,7 +306,7 @@ export function log_status(agent: string, action: string): void {
   const scrubbed = scrub_keys(action);
   process.stderr.write(`${color}${C.bold}[${agent}]${C.reset} ${scrubbed}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "stderr.log"), `[${agent}] ${scrubbed}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `[${agent}] ${scrubbed}\n`); } catch {}
   }
 }
 
@@ -314,7 +314,7 @@ export function log_header(msg: string): void {
   const scrubbed = scrub_keys(msg);
   process.stderr.write(`\n${C.bold}${scrubbed}${C.reset}\n\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "stderr.log"), `\n${scrubbed}\n\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `\n${scrubbed}\n\n`); } catch {}
   }
 }
 
@@ -322,7 +322,7 @@ export function log_success(msg: string): void {
   const scrubbed = scrub_keys(msg);
   process.stderr.write(`${C.green}${scrubbed}${C.reset}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "stderr.log"), `${scrubbed}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${scrubbed}\n`); } catch {}
   }
 }
 
@@ -330,7 +330,7 @@ export function log_warn(msg: string): void {
   const scrubbed = scrub_keys(msg);
   process.stderr.write(`${C.yellow}${scrubbed}${C.reset}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "stderr.log"), `${scrubbed}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${scrubbed}\n`); } catch {}
   }
 }
 
@@ -338,13 +338,13 @@ export function log_error(msg: string): void {
   const scrubbed = scrub_keys(msg);
   process.stderr.write(`${C.red}${scrubbed}${C.reset}\n`);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "stderr.log"), `${scrubbed}\n`); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stderr.txt"), `${scrubbed}\n`); } catch {}
   }
 }
 
 export function write_stdout(text: string): void {
   process.stdout.write(text);
   if (_log_dir) {
-    try { appendFileSync(join(_log_dir, "stdout.log"), text); } catch {}
+    try { appendFileSync(join(_log_dir, "logs/stdout.txt"), text); } catch {}
   }
 }
