@@ -4,7 +4,15 @@ import { tmpdir } from "os";
 import { call_agent_structured } from "./ai";
 import type { ToolSet } from "ai";
 import { compile_context } from "./context";
-import { resolve_config, get_main_agent, get_jousters } from "./config";
+import {
+  resolve_config,
+  get_main_agent,
+  get_jousters,
+  is_specialist_name,
+  build_specialist_agent,
+  preset_peer_pick,
+  detect_preset,
+} from "./config";
 import { create_workspace_tools } from "./tools";
 import { lint_mutation } from "./lint";
 import { maybe_compact } from "./compact";
@@ -196,6 +204,15 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
 
     log_header(`=== round ${round}/${max_rounds} ===`);
 
+    // cap: one summon per round across all peers. prevents specialist cascades
+    // and keeps runs predictable. either peer can summon; first-write-wins.
+    const MAX_SUMMONS_PER_ROUND = 1;
+    let summons_this_round = 0;
+
+    // peer_pick: the "second company" model, used as the default provider for
+    // ad-hoc summoned specialists that aren't pinned in rfc.yaml.
+    const peer_pick = preset_peer_pick(detect_preset());
+
     for (const jouster of jousters) {
       // check signal before each agent
       if (signal_received) break;
@@ -304,6 +321,120 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             accepted = true;
 
             log_success(`[${jouster.name}] accepted (attempt ${attempts})`);
+
+            // --- summon a specialist if requested ---
+            // only non-specialist agents (main/peer) can summon; specialists
+            // cannot recursively summon other specialists. one summon per round.
+            if (
+              mutation.summon &&
+              !is_specialist_name(jouster.name) &&
+              summons_this_round < MAX_SUMMONS_PER_ROUND &&
+              !signal_received
+            ) {
+              const specialist_name = mutation.summon.specialist;
+              const ask = mutation.summon.ask;
+              summons_this_round++;
+
+              log_status(jouster.name, `summoning ${specialist_name}: ${ask.slice(0, 120)}`);
+
+              try {
+                const specialist_agent = build_specialist_agent(
+                  specialist_name,
+                  ask,
+                  config,
+                  peer_pick
+                );
+
+                const spec_messages = compile_context(
+                  specialist_agent,
+                  snowball,
+                  "specialist",
+                  { has_tools: !!workspace_tools }
+                );
+
+                const spec_mutation = await call_agent_structured(
+                  specialist_agent,
+                  spec_messages,
+                  MutationResultSchema,
+                  {
+                    signal: abort_controller.signal,
+                    tools: workspace_tools,
+                    max_tool_steps,
+                  }
+                );
+
+                append_log(
+                  dir,
+                  `agent-${specialist_name}.log`,
+                  `\n--- step ${step} summoned by ${jouster.name} ---\nask: ${ask}\n\n${spec_mutation.critique}\n`
+                );
+
+                const spec_lint = await lint_mutation(main, snowball, spec_mutation.draft, {
+                  tools: workspace_tools,
+                  max_tool_steps,
+                });
+
+                if (spec_lint.valid) {
+                  const spec_critique: CritiqueEntry = {
+                    actor: specialist_name,
+                    action: `summoned_by_${jouster.name}`,
+                    notes: `ask: ${ask}\n\n${spec_mutation.critique}`,
+                    timestamp: new Date().toISOString(),
+                  };
+
+                  snowball = {
+                    ...snowball,
+                    draft: spec_mutation.draft,
+                    critique_trail: [...snowball.critique_trail, spec_critique],
+                  };
+
+                  const spec_entry: HistoryEntry = {
+                    step,
+                    actor: specialist_name,
+                    action: `summoned_by_${jouster.name}`,
+                    status: "accepted",
+                    timestamp: new Date().toISOString(),
+                    snowball,
+                  };
+                  commit_state(dir, step, specialist_name, spec_entry);
+                  step++;
+                  log_success(`[${specialist_name}] accepted (summoned by ${jouster.name})`);
+                } else {
+                  const spec_entry: HistoryEntry = {
+                    step,
+                    actor: specialist_name,
+                    action: `summoned_by_${jouster.name}`,
+                    status: "rejected",
+                    timestamp: new Date().toISOString(),
+                    snowball: { ...snowball, draft: spec_mutation.draft },
+                    violations: spec_lint.violations,
+                  };
+                  commit_state(dir, step, specialist_name, spec_entry);
+                  step++;
+                  log_warn(`[${specialist_name}] rejected — violations: ${spec_lint.violations.join("; ")}`);
+                }
+              } catch (err: any) {
+                if (err.name === "AbortError" || signal_received) {
+                  log_status(specialist_name, "aborted");
+                } else {
+                  const err_detail = err.message || err.cause?.message || String(err);
+                  log_error(`[${specialist_name}] summon error: ${err_detail}`);
+                  append_log(
+                    dir,
+                    "execution.log",
+                    `\n--- ${new Date().toISOString()} ---\n${specialist_name} summon error: ${err_detail}\n`
+                  );
+                }
+              }
+            } else if (
+              mutation.summon &&
+              !is_specialist_name(jouster.name) &&
+              summons_this_round >= MAX_SUMMONS_PER_ROUND
+            ) {
+              log_warn(
+                `[${jouster.name}] summon for ${mutation.summon.specialist} deferred (round cap reached)`
+              );
+            }
           } else {
             // rejected — save the rejection and retry
             last_violations = lint.violations;

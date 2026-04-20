@@ -3,7 +3,8 @@ import { join, resolve } from "path";
 import { homedir } from "os";
 import { load_config, redact, to_json } from "./utils";
 import { JoustError } from "./errors";
-import type { JoustConfig, AgentConfig, JoustDefaults } from "./types";
+import type { JoustConfig, AgentConfig, JoustDefaults, SpecialistName } from "./types";
+import { SPECIALIST_NAMES } from "./types";
 
 // --- built-in defaults ---
 
@@ -14,30 +15,29 @@ const DEFAULT_DEFAULTS: JoustDefaults = {
   max_rounds: 1,
 };
 
+// default panel: two peer lead architects. same system prompt, different
+// providers. specialists are summoned on demand by either peer, not
+// pre-baked into the panel.
 const BUILTIN_AGENTS: Record<string, Omit<AgentConfig, "name">> = {
   main: {
     model: "claude-opus-4-6",
     api_key: "$ANTHROPIC_API_KEY",
     system:
-      "You are the lead architect. You own the core vision. " +
+      "You are a senior lead architect. You own the core vision. " +
       "Before any peer review, define strict RFC 2119 invariants (MUST, SHOULD, MUST NOT). " +
-      "Protect these invariants across all revisions.",
+      "Protect these invariants across all revisions. " +
+      "When a concern arises that is clearly outside your expertise (security, cost, database, performance, UX, or legal/compliance), " +
+      "summon the relevant specialist with a specific, scoped question.",
   },
-  security: {
-    model: "claude-sonnet-4-6",
-    api_key: "$ANTHROPIC_API_KEY",
+  peer: {
+    model: "gemini-2.5-pro",
+    api_key: "$GOOGLE_GENERATIVE_AI_API_KEY",
     system:
-      "You are a ruthless security auditor. " +
-      "Mutate the draft to close vulnerabilities, " +
-      "but you MUST respect the lead architect's invariants.",
-  },
-  cfo: {
-    model: "claude-sonnet-4-6",
-    api_key: "$ANTHROPIC_API_KEY",
-    system:
-      "You are the CFO. Critique the proposal strictly on cost, margin, and vendor lock-in. " +
-      "Mutate the draft to optimize for cost, " +
-      "but you MUST respect the lead architect's invariants.",
+      "You are a senior lead architect. You own the core vision. " +
+      "Before any peer review, define strict RFC 2119 invariants (MUST, SHOULD, MUST NOT). " +
+      "Protect these invariants across all revisions. " +
+      "When a concern arises that is clearly outside your expertise (security, cost, database, performance, UX, or legal/compliance), " +
+      "summon the relevant specialist with a specific, scoped question.",
   },
 };
 
@@ -153,80 +153,205 @@ export function is_preset(s: string): s is Preset {
   return (PRESETS as readonly string[]).includes(s);
 }
 
+export function has_gemini_key(): boolean {
+  return !!(process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY);
+}
+
+// gemini provider reads GOOGLE_GENERATIVE_AI_API_KEY. if the user has set
+// GEMINI_API_KEY instead (common in older scripts), mirror it at startup so
+// we don't force them to rename env vars.
+export function normalize_gemini_env(): void {
+  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY && process.env.GEMINI_API_KEY) {
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = process.env.GEMINI_API_KEY;
+  }
+}
+
 export function detect_preset(): Preset {
   const has_anthropic = !!process.env.ANTHROPIC_API_KEY;
-  const has_gemini = !!process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const has_gemini = has_gemini_key();
   const has_openai = !!process.env.OPENAI_API_KEY;
 
-  const count = [has_anthropic, has_gemini, has_openai].filter(Boolean).length;
-
-  if (count >= 2) return "mixed";
+  // two-company default: Claude + Gemini beats single-provider
+  if (has_anthropic && has_gemini) return "mixed";
   if (has_gemini && !has_anthropic) return "gemini";
   if (has_openai && !has_anthropic && !has_gemini) return "openai";
   return "anthropic"; // default — will fail at call time with a clear error if key is missing
 }
 
-interface PresetAgent {
+// --- provider model assignment per preset ---
+
+export interface ProviderPick {
   model: string;
   api_key: string;
-  system: string;
 }
 
+// two slots per preset: main (one lead architect) + peer (the other lead,
+// also used as provider for summoned specialists).
 interface PresetConfig {
-  agents: Record<string, PresetAgent>;
+  main: ProviderPick;
+  peer: ProviderPick;
 }
 
-const SYSTEM_MAIN =
-  "You are the lead architect. You own the core vision.\n" +
-  "Before any peer review, define strict RFC 2119 invariants\n" +
-  "(MUST, SHOULD, MUST NOT). Protect these invariants across all revisions.";
+const ANTHROPIC_OPUS:   ProviderPick = { model: "claude-opus-4-6",   api_key: "$ANTHROPIC_API_KEY" };
+const ANTHROPIC_SONNET: ProviderPick = { model: "claude-sonnet-4-6", api_key: "$ANTHROPIC_API_KEY" };
+const GEMINI_PRO:       ProviderPick = { model: "gemini-2.5-pro",    api_key: "$GOOGLE_GENERATIVE_AI_API_KEY" };
+const OPENAI_GPT4O:     ProviderPick = { model: "gpt-4o",            api_key: "$OPENAI_API_KEY" };
 
-const SYSTEM_SECURITY =
-  "You are a ruthless security auditor. Mutate the draft to close\n" +
-  "vulnerabilities, but you MUST respect the invariants.";
-
-const SYSTEM_CFO =
-  "You are the CFO. Optimize for cost and margin,\n" +
-  "but you MUST respect the invariants.";
-
-const PRESET_CONFIGS: Record<Preset, PresetConfig> = {
-  anthropic: {
-    agents: {
-      main:     { model: "claude-opus-4-6",   api_key: "$ANTHROPIC_API_KEY", system: SYSTEM_MAIN },
-      security: { model: "claude-sonnet-4-6", api_key: "$ANTHROPIC_API_KEY", system: SYSTEM_SECURITY },
-      cfo:      { model: "claude-sonnet-4-6", api_key: "$ANTHROPIC_API_KEY", system: SYSTEM_CFO },
-    },
-  },
-  gemini: {
-    agents: {
-      main:     { model: "gemini-2.5-pro",  api_key: "$GOOGLE_GENERATIVE_AI_API_KEY", system: SYSTEM_MAIN },
-      security: { model: "gemini-2.5-pro",  api_key: "$GOOGLE_GENERATIVE_AI_API_KEY", system: SYSTEM_SECURITY },
-      cfo:      { model: "gemini-2.5-pro",  api_key: "$GOOGLE_GENERATIVE_AI_API_KEY", system: SYSTEM_CFO },
-    },
-  },
-  openai: {
-    agents: {
-      main:     { model: "gpt-4o", api_key: "$OPENAI_API_KEY", system: SYSTEM_MAIN },
-      security: { model: "gpt-4o", api_key: "$OPENAI_API_KEY", system: SYSTEM_SECURITY },
-      cfo:      { model: "gpt-4o", api_key: "$OPENAI_API_KEY", system: SYSTEM_CFO },
-    },
-  },
-  mixed: {
-    agents: {
-      main:     { model: "claude-opus-4-6",  api_key: "$ANTHROPIC_API_KEY",            system: SYSTEM_MAIN },
-      security: { model: "gemini-2.5-pro",   api_key: "$GOOGLE_GENERATIVE_AI_API_KEY", system: SYSTEM_SECURITY },
-      cfo:      { model: "gpt-4o",           api_key: "$OPENAI_API_KEY",               system: SYSTEM_CFO },
-    },
-  },
+export const PRESET_CONFIGS: Record<Preset, PresetConfig> = {
+  // two-company default — claude + gemini. adversarial because they're
+  // from different companies, not because of costume personas.
+  mixed:     { main: ANTHROPIC_OPUS, peer: GEMINI_PRO       },
+  // single-provider fallbacks (loses the cross-company check)
+  anthropic: { main: ANTHROPIC_OPUS, peer: ANTHROPIC_SONNET },
+  gemini:    { main: GEMINI_PRO,     peer: GEMINI_PRO       },
+  openai:    { main: OPENAI_GPT4O,   peer: OPENAI_GPT4O     },
 };
+
+export function preset_peer_pick(preset: Preset): ProviderPick {
+  return PRESET_CONFIGS[preset].peer;
+}
+
+// --- specialist pool ---
+// specialists are NOT part of the default panel. A lead architect (main or
+// peer) summons one on demand during a mutation turn when a concern arises
+// that is clearly outside their expertise. Each specialist runs once per
+// summon, scoped to the specific `ask` from the summoner.
+
+export interface Specialist {
+  name: SpecialistName;
+  summary: string; // one-line hint shown to the lead architects
+  system: string;  // agent system prompt when summoned
+}
+
+export const SPECIALISTS: Specialist[] = [
+  {
+    name: "security",
+    summary: "attack surface, authn/authz, secrets, injection, tenant isolation, supply chain",
+    system:
+      "You are a ruthless security auditor. You have been summoned for a\n" +
+      "one-shot, scoped review. Focus only on the asked question.\n" +
+      "You MUST respect the invariants.",
+  },
+  {
+    name: "cfo",
+    summary: "cost, margin, vendor lock-in, commit tiers, cost of ownership at scale",
+    system:
+      "You are the CFO. You have been summoned for a one-shot, scoped review.\n" +
+      "Focus only on the asked question. You MUST respect the invariants.",
+  },
+  {
+    name: "dba",
+    summary: "schemas, indexes, migrations, query patterns, consistency, durability",
+    system:
+      "You are a veteran DBA. You have been summoned for a one-shot, scoped review.\n" +
+      "Focus only on the asked question. You MUST respect the invariants.",
+  },
+  {
+    name: "perf",
+    summary: "latency, throughput, hot paths, caching, capacity planning, SLOs",
+    system:
+      "You are a performance engineer. You have been summoned for a one-shot,\n" +
+      "scoped review. Focus only on the asked question. You MUST respect the invariants.",
+  },
+  {
+    name: "ux",
+    summary: "user flows, error states, accessibility, progressive disclosure",
+    system:
+      "You are a UX lead. You have been summoned for a one-shot, scoped review.\n" +
+      "Focus only on the asked question. You MUST respect the invariants.",
+  },
+  {
+    name: "legal",
+    summary: "privacy/PII, data retention, licensing, regulatory compliance (GDPR, HIPAA, SOC2)",
+    system:
+      "You are a pragmatic legal/compliance reviewer. You have been summoned for\n" +
+      "a one-shot, scoped review. Focus only on the asked question.\n" +
+      "You MUST respect the invariants.",
+  },
+];
+
+export function is_specialist_name(s: string): s is SpecialistName {
+  return (SPECIALIST_NAMES as readonly string[]).includes(s);
+}
+
+export function get_specialist(name: string): Specialist | undefined {
+  return SPECIALISTS.find((s) => s.name === name);
+}
+
+// --- get the peers (main and any named peer) and specialists currently configured ---
+
+// peers are the lead architects that always run — default is main + peer.
+// any agent in rfc.yaml that isn't a known specialist name is treated as a peer.
+export function get_peer_agents(config: JoustConfig): AgentConfig[] {
+  return Object.values(config.agents).filter((a) => !is_specialist_name(a.name));
+}
+
+// specialists configured inline in rfc.yaml — these are the summonable pool
+// available to this run. Defaults to the full pool when not listed in config.
+export function get_configured_specialists(config: JoustConfig): AgentConfig[] {
+  return Object.values(config.agents).filter((a) => is_specialist_name(a.name));
+}
+
+// build an AgentConfig for a summoned specialist. prefers user-configured
+// specialist from rfc.yaml (so model/system overrides are honored); falls back
+// to built-in pool definition using the peer's provider pick.
+export function build_specialist_agent(
+  name: SpecialistName,
+  ask: string,
+  config: JoustConfig,
+  fallback_pick: ProviderPick
+): AgentConfig {
+  const configured = config.agents[name];
+  const spec = get_specialist(name);
+  if (!spec) throw new JoustError(`unknown specialist: ${name}`);
+
+  const base: AgentConfig = configured ?? {
+    name,
+    model: fallback_pick.model,
+    api_key: fallback_pick.api_key,
+    system: spec.system,
+    temperature: config.defaults.temperature,
+  };
+
+  // append the summoner's ask so the specialist's review is scoped to exactly
+  // what was requested — not a general wide-area review.
+  return {
+    ...base,
+    system: [
+      base.system,
+      "",
+      "You have been summoned for a specific, scoped review.",
+      "Your scope for this review:",
+      `  ${ask}`,
+      "",
+      "Stay narrowly focused on that scope. Do not rewrite the draft wholesale.",
+      "Only mutate what is necessary to address the scoped question.",
+    ].join("\n"),
+  };
+}
+
+const SYSTEM_PEER =
+  "You are a senior lead architect. You own the core vision.\n" +
+  "Before any peer review, define strict RFC 2119 invariants\n" +
+  "(MUST, SHOULD, MUST NOT). Protect these invariants across all revisions.\n" +
+  "\n" +
+  "When a concern arises that is clearly outside your expertise\n" +
+  "(security, cost, database, performance, UX, or legal/compliance), summon\n" +
+  "the relevant specialist via the `summon` field with a specific, scoped\n" +
+  "question. Do not summon for routine concerns — only when the question\n" +
+  "genuinely warrants a specialist's eye.";
 
 function format_yaml_system(system: string, indent: string): string {
   const lines = system.split("\n");
   return lines.map((l, i) => i === 0 ? `${indent}system: >\n${indent}  ${l}` : `${indent}  ${l}`).join("\n");
 }
 
-export function generate_default_config(preset: Preset = "anthropic"): string {
+// generate_default_config emits rfc.yaml with the default panel (main + peer).
+// Specialists are listed commented out — users can uncomment to pin one as a
+// permanent panel member, or leave them available via summon only.
+export function generate_default_config(preset: Preset = "mixed"): string {
   const cfg = PRESET_CONFIGS[preset];
+
   const lines = [
     "defaults:",
     "  temperature: 0.2",
@@ -237,13 +362,28 @@ export function generate_default_config(preset: Preset = "anthropic"): string {
     "  # max_tool_steps: 10             # cap tool-use round-trips per agent turn",
     "",
     "agents:",
+    "  main:",
+    `    model: ${cfg.main.model}`,
+    `    api_key: ${cfg.main.api_key}`,
+    format_yaml_system(SYSTEM_PEER, "    "),
+    "",
+    "  peer:",
+    `    model: ${cfg.peer.model}`,
+    `    api_key: ${cfg.peer.api_key}`,
+    format_yaml_system(SYSTEM_PEER, "    "),
+    "",
+    "# specialist pool — summoned on demand by main or peer with a scoped `ask`.",
+    "# uncomment any of these to pin them as permanent panel members instead.",
+    "# (model/api_key default to the peer provider; override as needed.)",
   ];
 
-  for (const [name, agent] of Object.entries(cfg.agents)) {
-    lines.push(`  ${name}:`);
-    lines.push(`    model: ${agent.model}`);
-    lines.push(`    api_key: ${agent.api_key}`);
-    lines.push(format_yaml_system(agent.system, "    "));
+  for (const spec of SPECIALISTS) {
+    lines.push(`# ${spec.name}: ${spec.summary}`);
+    lines.push(`#   ${spec.name}:`);
+    lines.push(`#     model: ${cfg.peer.model}`);
+    lines.push(`#     api_key: ${cfg.peer.api_key}`);
+    const indented = format_yaml_system(spec.system, "#     ");
+    lines.push(indented);
     lines.push("");
   }
 

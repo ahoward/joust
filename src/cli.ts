@@ -6,7 +6,11 @@ import { tail } from "./tail";
 import { status, export_draft, diff, plan, ask } from "./commands";
 import { log } from "./utils";
 import { JoustError, JoustUserError } from "./errors";
-import { is_preset, PRESETS, type Preset } from "./config";
+import { is_preset, PRESETS, normalize_gemini_env, type Preset } from "./config";
+
+// mirror GEMINI_API_KEY → GOOGLE_GENERATIVE_AI_API_KEY so either works.
+// Must run before any agent config resolution or API call.
+normalize_gemini_env();
 
 // --- known commands (slash-prefixed) ---
 
@@ -171,11 +175,11 @@ function print_help() {
   log("  --timeout <duration>    hard kill limit");
   log("  --tank                  unstoppable mode (backoff 429s, skip 5xx)");
   log("");
-  log("presets:");
-  log("  anthropic               opus main + sonnet jousters");
-  log("  gemini                  gemini-2.5-pro all agents");
-  log("  openai                  gpt-4o all agents");
-  log("  mixed                   opus main + gemini security + gpt-4o cfo");
+  log("presets (default panel: two peer lead architects, specialists summoned on demand):");
+  log("  mixed                   opus main + gemini peer (default when both keys set)");
+  log("  anthropic               opus main + sonnet peer");
+  log("  gemini                  gemini-2.5-pro main + peer");
+  log("  openai                  gpt-4o main + peer");
   log("");
   log("examples:");
   log('  joust "design a caching layer for a mobile api"');

@@ -121,11 +121,31 @@ export const BootstrapResultSchema = z.object({
 
 export type BootstrapResult = z.infer<typeof BootstrapResultSchema>;
 
+// --- specialist summon (zod schema) ---
+// when a lead architect (main or peer) thinks a specialist review is warranted,
+// they attach a summon to their mutation. The ask is a specific, scoped question.
+
+export const SPECIALIST_NAMES = ["security", "cfo", "dba", "perf", "ux", "legal"] as const;
+export type SpecialistName = (typeof SPECIALIST_NAMES)[number];
+
+export const SummonSchema = z.object({
+  specialist: z.enum(SPECIALIST_NAMES)
+    .describe("which specialist to summon for a one-shot scoped review"),
+  ask: z.string().min(1)
+    .describe("specific, scoped question for the specialist (not vague — e.g. 'evaluate whether the token-refresh flow is replay-vulnerable')"),
+});
+
+export type Summon = z.infer<typeof SummonSchema>;
+
 // --- jouster mutation result (zod schema) ---
 
 export const MutationResultSchema = z.object({
   draft: z.string().describe("the full rewritten draft incorporating your critique"),
   critique: z.string().describe("summary of what you changed and why"),
+  summon: SummonSchema.optional().describe(
+    "OPTIONAL. Only set this if the draft raises a concrete concern outside your expertise " +
+    "that warrants a specialist review. Leave absent for normal mutations."
+  ),
 });
 
 export type MutationResult = z.infer<typeof MutationResultSchema>;
@@ -140,4 +160,4 @@ export type CompactionResult = z.infer<typeof CompactionResultSchema>;
 
 // --- agent role ---
 
-export type AgentRole = "jouster" | "lint" | "bootstrap" | "polish" | "compact" | "ask";
+export type AgentRole = "jouster" | "lint" | "bootstrap" | "polish" | "compact" | "ask" | "specialist";

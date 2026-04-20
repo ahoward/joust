@@ -161,8 +161,31 @@ export function compile_context(
       );
     }
     messages.push({ role: "system", content: ask_lines.join("\n") });
+  } else if (role === "specialist") {
+    // summoned specialist — scope-bound, single review
+    const spec_lines = [
+      agent.system,
+      "",
+      "You MUST respect the following invariants. If you violate them, your mutation will be rejected.",
+      "",
+      "INVARIANTS:",
+      invariant_text,
+      "",
+    ];
+    if (options?.has_tools) {
+      spec_lines.push(
+        "You have tools to read files from the project workspace. Use them to ground your analysis",
+        "in actual code. Do not guess at file contents — read them.",
+        "",
+      );
+    }
+    spec_lines.push(
+      "Output structured JSON: { draft (full rewrite of the document), critique (summary of what you changed and why) }.",
+      "You are a summoned specialist — DO NOT set `summon` on your own output. Specialists cannot summon.",
+    );
+    messages.push({ role: "system", content: spec_lines.join("\n") });
   } else {
-    // jouster
+    // jouster (main or peer lead architect)
     const jouster_lines = [
       agent.system,
       "",
@@ -181,7 +204,23 @@ export function compile_context(
       );
     }
     jouster_lines.push(
-      "Output structured JSON: { draft (full rewrite of the document), critique (what you changed and why) }",
+      "Output structured JSON:",
+      "  - draft: full rewrite of the document",
+      "  - critique: what you changed and why",
+      "  - summon (OPTIONAL): { specialist, ask } — only set this when the draft raises a",
+      "    concrete concern outside your expertise that genuinely warrants a specialist's eye.",
+      "",
+      "Available specialists (summon only when warranted — prefer resolving it yourself):",
+      "  - security — attack surface, authn/authz, secrets, injection, tenant isolation",
+      "  - cfo      — cost, margin, vendor lock-in, cost of ownership at scale",
+      "  - dba      — schemas, indexes, migrations, query patterns, consistency",
+      "  - perf     — latency, throughput, hot paths, caching, capacity",
+      "  - ux       — user flows, error states, accessibility",
+      "  - legal    — privacy/PII, data retention, licensing, GDPR/HIPAA/SOC2",
+      "",
+      "The `ask` MUST be a specific, scoped question (e.g.",
+      `"evaluate whether the token-refresh flow is replay-vulnerable"),`,
+      `not a vague "please review". Leave summon absent for routine mutations.`,
     );
     messages.push({ role: "system", content: jouster_lines.join("\n") });
   }
