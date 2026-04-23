@@ -24,11 +24,12 @@ Phase 1 of the epic, split into commit-sized steps. Each step ends with green te
 - **[step 1]** types + Strategy interface. Added fib scale, Scorecard, StrategiesConfig, Strategy<N> + registry in `src/types.ts` and `src/strategies/index.ts`. Tests: 72 pass. Commit: `11f3654`.
 - **[step 2]** `invariants` strategy. `src/strategies/invariants.ts` + 9 tests. Bootstrap classifies+extracts; score marks met/not-met and maps to fib floors. Commit: `3d01093`.
 - **[step 3]** `rubric` strategy. `src/strategies/rubric.ts` + 8 tests. Commit: `865e6f3`.
-- **[step 4]** `color` strategy. `src/strategies/color.ts` + 6 tests. Single-dim red/yellow/green, `max=2, floor=1`. Scorecard carries `color_tier` for lexicographic comparison in lint/run. `./dev/test` 95 pass. Commit: _pending_.
+- **[step 4]** `color` strategy. Commit: `8ff4895`.
+- **[step 5]** `lint.ts` strategy dispatcher. Added `score_draft()` + `compare_results()` alongside the preserved legacy `lint_mutation`. Module-level `import "./strategies/…"` ensures all three self-register. `score_draft` runs configured strategies in parallel, aggregates mean-of-means, extracts color_tier, collects floor violations. `compare_results` does lexicographic `(color_tier, weighted_aggregate)`. Tests (10 new) — empty config, single-strategy, MUST violation, red floor, yellow/green tie breaking, three-strategy aggregate, compare_results all branches. `./dev/test` 105 pass. Commit: _pending_.
 
 ## Next
 
-**Step 5 — rewrite `src/lint.ts` as a strategy dispatcher.** New function `score_draft(main, strategies_config, snowball, candidate)` that: loads each configured strategy via `get_strategy()`, calls `score()` on each, aggregates into `ScoringResult` (mean of per-strategy aggregates, color_tier extracted, floor violations collected). Must import the three strategy modules so they self-register. Keep the old `lint_mutation` callable for back-compat until step 6 switches `run.ts`. Tests: mocked-strategy dispatch, floor violations detected, color tier plumbed through.
+**Step 6 — rewrite `src/run.ts` to drive score_draft.** Biggest step. Thread `strategies` config through the loop. Replace the binary-accept/reject jouster mutation gate with `compare_results` — accept a candidate iff `passed && compare >= best`. Track `best_draft`, `best_result` in snowball; emit them as new snowball fields. Plateau detection (ε=0.02, K=2 rounds). Polish gate uses same scoring. Final STDOUT emits `best_draft`. Requires: extending `Snowball` in types.ts with `strategies`, `best_draft`, `best_scoring`; migration shim so legacy entries rehydrate with empty `strategies:{}` (trivially passes) — step 8 makes migration real. For now, new runs only.
 
 ## Deferred
 
