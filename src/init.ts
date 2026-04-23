@@ -1,14 +1,18 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, unlinkSync } from "fs";
 import { join, resolve } from "path";
 import { tmpdir } from "os";
+import "./strategies/invariants";
+import "./strategies/rubric";
+import "./strategies/color";
+
 import { call_agent_structured } from "./ai";
 import { compile_context } from "./context";
 import { resolve_config, get_main_agent, generate_default_config } from "./config";
+import { get_strategy, list_strategies } from "./strategies";
 import {
   slugify,
   ensure_dir,
   write_atomic,
-  to_json,
   commit_state,
   log,
   log_status,
@@ -17,6 +21,9 @@ import {
   BootstrapResultSchema,
   type Snowball,
   type HistoryEntry,
+  type StrategiesConfig,
+  type StrategyName,
+  type AgentConfig,
 } from "./types";
 
 // --- read prompt from $EDITOR ---
@@ -42,6 +49,7 @@ async function prompt_from_editor(): Promise<string> {
   await proc.exited;
 
   const content = readFileSync(tmp_file, "utf-8");
+  try { unlinkSync(tmp_file); } catch {}
   const lines = content
     .split("\n")
     .filter((l) => !l.startsWith("#"))
@@ -58,18 +66,56 @@ async function prompt_from_editor(): Promise<string> {
 // --- read prompt from file or string ---
 
 function read_prompt(input: string): string {
-  // check if it's a file path
   if (existsSync(input) && (input.endsWith(".md") || input.endsWith(".txt"))) {
     return readFileSync(input, "utf-8").trim();
   }
-  // otherwise treat as raw string
   return input.trim();
 }
 
-// --- bootstrap ---
+// --- strategies bootstrap ---
+//
+// run every registered strategy's bootstrap() against the prompt. a
+// strategy that returns null is omitted from the final config. the
+// result is what gets persisted to snowball.strategies and drives
+// lint in subsequent rounds.
+//
+// bootstraps run in parallel — they are read-only classifier calls,
+// independent, and use the same main agent.
 
-export async function init(args: string[], options: { run_after?: boolean } = {}): Promise<string> {
-  // get the prompt
+async function bootstrap_strategies(
+  main: AgentConfig,
+  prompt: string,
+  signal?: AbortSignal
+): Promise<StrategiesConfig> {
+  const names = list_strategies();
+  log_status("main", `bootstrapping strategies: ${names.join(", ")}`);
+
+  const pairs = await Promise.all(
+    names.map(async (name) => {
+      const s = get_strategy(name as StrategyName);
+      try {
+        const cfg = await s.bootstrap({ prompt, main, signal });
+        return [name, cfg] as const;
+      } catch (err: any) {
+        log_status(name, `bootstrap error: ${err.message}`);
+        return [name, null] as const;
+      }
+    })
+  );
+
+  const out: StrategiesConfig = {};
+  for (const [name, cfg] of pairs) {
+    if (!cfg) continue;
+    if (name === "invariants") out.invariants = cfg as any;
+    else if (name === "rubric") out.rubric = cfg as any;
+    else if (name === "color") out.color = cfg as any;
+  }
+  return out;
+}
+
+// --- init ---
+
+export async function init(args: string[], _options: { run_after?: boolean } = {}): Promise<string> {
   let prompt: string;
   if (args.length === 0) {
     prompt = await prompt_from_editor();
@@ -79,11 +125,9 @@ export async function init(args: string[], options: { run_after?: boolean } = {}
 
   log(`bootstrapping joust from prompt...`);
 
-  // resolve config (no project dir yet)
   const config = resolve_config();
   const main = get_main_agent(config);
 
-  // create empty snowball with the prompt as the draft
   const seed_snowball: Snowball = {
     invariants: { MUST: [], SHOULD: [], MUST_NOT: [] },
     draft: prompt,
@@ -92,31 +136,43 @@ export async function init(args: string[], options: { run_after?: boolean } = {}
     human_directives: [],
   };
 
-  // call main to bootstrap: expand prompt into draft + invariants
-  log_status("main", "expanding prompt into draft + invariants...");
+  // 1) expand the prompt into a first-pass draft via the legacy bootstrap
+  //    path (its invariants are informative; the real strategies config
+  //    comes from step 2 below).
+  log_status("main", "expanding prompt into draft...");
   const context = compile_context(main, seed_snowball, "bootstrap");
-  const result = await call_agent_structured(main, context, BootstrapResultSchema);
+  const bootstrap_result = await call_agent_structured(main, context, BootstrapResultSchema);
 
-  // build the real snowball
+  // 2) ask each strategy to bootstrap its own config from the prompt.
+  const strategies = await bootstrap_strategies(main, prompt);
+
+  // log what got picked
+  const picked = Object.keys(strategies);
+  if (picked.length === 0) {
+    log(`  [no strategies applied — runs will accept every mutation trivially]`);
+  } else {
+    log(`  strategies: ${picked.join(", ")}`);
+  }
+
   const snowball: Snowball = {
-    invariants: result.invariants,
-    draft: result.draft,
+    invariants: bootstrap_result.invariants,  // kept for migration/back-compat
+    draft: bootstrap_result.draft,
     critique_trail: [],
     resolved_decisions: [],
     human_directives: [],
+    strategies,
+    best_draft: bootstrap_result.draft,
+    aggregate_history: [],
   };
 
-  // create state directory
   const slug = slugify(prompt);
   const dir = resolve(slug);
   ensure_dir(dir);
   ensure_dir(join(dir, "history"));
   ensure_dir(join(dir, "logs"));
 
-  // write config snapshot
   write_atomic(join(dir, "rfc.yaml"), generate_default_config());
 
-  // write seed history entry
   const entry: HistoryEntry = {
     step: 0,
     actor: "main",
@@ -128,16 +184,31 @@ export async function init(args: string[], options: { run_after?: boolean } = {}
 
   commit_state(dir, 0, "main", entry);
 
-  // log summary
   log(`\ncreated: ${dir}/`);
   log(`  rfc.yaml            config (edit before running)`);
-  log(`  snowball.json       current state`);
+  log(`  snowball.json       current state (strategies inline)`);
   log(`  history/000-main.json  seed`);
-  log(`\ninvariants:`);
-  for (const rule of snowball.invariants.MUST) log(`  MUST: ${rule}`);
-  for (const rule of snowball.invariants.SHOULD) log(`  SHOULD: ${rule}`);
-  for (const rule of snowball.invariants.MUST_NOT) log(`  MUST NOT: ${rule}`);
+  if (strategies.invariants) {
+    log(`\ninvariants:`);
+    for (const r of strategies.invariants.MUST) log(`  MUST: ${r}`);
+    for (const r of strategies.invariants.SHOULD) log(`  SHOULD: ${r}`);
+    for (const r of strategies.invariants.MUST_NOT) log(`  MUST NOT: ${r}`);
+  }
+  if (strategies.rubric) {
+    log(`\nrubric dimensions:`);
+    for (const d of strategies.rubric.dimensions) {
+      log(`  ${d.name} (weight ${d.weight})${d.description ? `: ${d.description}` : ""}`);
+    }
+  }
+  if (strategies.color) {
+    log(`\ncolor question:`);
+    log(`  ${strategies.color.question}`);
+  }
   log(`\nready. review config and run: joust run ${dir}/`);
 
   return dir;
 }
+
+// --- export for tests ---
+
+export const _bootstrap_strategies = bootstrap_strategies;

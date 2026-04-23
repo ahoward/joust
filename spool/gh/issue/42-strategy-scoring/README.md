@@ -26,11 +26,12 @@ Phase 1 of the epic, split into commit-sized steps. Each step ends with green te
 - **[step 3]** `rubric` strategy. `src/strategies/rubric.ts` + 8 tests. Commit: `865e6f3`.
 - **[step 4]** `color` strategy. Commit: `8ff4895`.
 - **[step 5]** lint dispatcher. Commit: `99e04e5`.
-- **[step 6]** rewrite `run.ts` around score_draft + compare_results. Extended `Snowball` with optional `strategies`, `best_draft`, `best_scoring`, `aggregate_history` (back-compat for legacy entries). Added `migrate_snowball` — legacy entries with `invariants` rehydrate as `strategies.invariants`, empty otherwise. Jouster + polish gates now: compute `ScoringResult` for candidate, accept iff `passed && compare_results(candidate, best) >= 0`. Best-so-far tracking via `best_draft` / `best_scoring`. Plateau detection: aggregate_history tail of K+1 with improvements ≤ ε = 0.02 ends the loop. Final STDOUT emits `best_draft`. Tests (9 new) — `is_plateau` edge cases + `migrate_snowball` three paths. `./dev/test` 114 pass. Commit: _pending_.
+- **[step 6]** `run.ts` rewrite. Commit: `a84fbeb`.
+- **[step 7]** `init.ts` bootstraps strategies. `bootstrap_strategies(main, prompt)` runs every registered strategy's `bootstrap()` in parallel, collects the non-null results into a `StrategiesConfig`, and persists it into `snowball.strategies`. Errors in one strategy's bootstrap don't kill the others (per-strategy try/catch + null on failure). The seed snowball now carries `strategies`, `best_draft`, `aggregate_history` from the start. Init log reports which strategies applied. Tests (3 new) — all-decline returns empty, mixed results filter correctly, error-resilience. `./dev/test` 117 pass. Commit: _pending_.
 
 ## Next
 
-**Step 7 — bootstrap writes `strategies:` block.** Rewrite `src/init.ts` to run all three strategies' `bootstrap()` calls, collect the non-null results into a `StrategiesConfig`, and persist it into the initial snowball (`snowball.strategies`). Also keep the existing `result.invariants` / `result.draft` schema for the seed draft. The operator-edit surface is the snowball's `strategies` field — next run reads it. (Phase 2 will make this editable via rfc.yaml; phase 1 keeps it in the snowball.)
+**Step 8 — migration + `check_context_size` fix.** `migrate_snowball` in run.ts already handles legacy entries on load. Add: `src/context.ts` `check_context_size` currently references `snowball.invariants.MUST.length` in its warning — it's actually NOT broken (token estimation is unchanged), so this step is smaller than I thought. Also — `src/commands.ts` (status/plan/export/diff) references `snowball.invariants`. Update status/plan to show strategies instead. Verify migration round-trip test with a legacy JSON fixture. Final smoke: `./dev/post_flight` green.
 
 ## Deferred
 
@@ -42,10 +43,10 @@ Phase 1 of the epic, split into commit-sized steps. Each step ends with green te
 
 ## Pitfalls
 
-- **Legacy history migration must come before `run.ts` tries to resume a run.** If step 8 is out of order, resume will crash on legacy entries. Order matters.
-- **`color` can be configured alone.** Guard in bootstrap or lint — if `color` is the sole strategy, there's no tie-breaker past the 3 levels. Warn or auto-add `rubric`. TBD during step 4.
-- **`check_context_size` in `src/utils.ts` references `snowball.invariants`.** Step 5 needs to update this too, otherwise token-budget checks break silently.
-- **Retire stale `rfc.yaml` comments while touching these files.** Tracked separately in #44 but cheaper to fix inline.
+- **Config file is `rfc.yaml` (YAML), not `config.json`.** See `spool/agents/guardrails.md`. #44 was closed as invalid.
+- **Test ordering + strategy registry.** `_reset_strategies()` in `lint.test.ts` and `init.test.ts` clears the registry. Subsequent test files relying on auto-register may see an empty registry because modules are cached. Currently tests pass but this is order-dependent. If a new test fails mysteriously, consider adding a `beforeEach` that re-imports or re-registers.
+- **`color` can be configured alone.** Bootstrap may emit `color`-only configs for prompts like "is this X?". Within-tier improvements can't be measured when color is alone. Consider: if bootstrap returns color-only, also force rubric. Deferred for phase 2.
+- **`Snowball.invariants` is still required by schema.** Kept for back-compat during migration. When `strategies.invariants` is set, both are effectively the same data. Future cleanup: drop the top-level field once migration path is retired (not in phase 1).
 
 ## Open questions
 
