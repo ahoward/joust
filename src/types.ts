@@ -21,6 +21,13 @@ export interface Snowball {
   critique_trail: CritiqueEntry[];
   resolved_decisions: string[];
   human_directives: string[];
+  // strategy-scoring fields (#42). all optional for migration: legacy
+  // snapshots lack these and are rehydrated into the trivial "no
+  // strategies configured" shape on load.
+  strategies?: StrategiesConfig;
+  best_draft?: string;
+  best_scoring?: ScoringResult;
+  aggregate_history?: number[];  // for plateau detection across rounds
 }
 
 // --- history ---
@@ -52,12 +59,20 @@ const CritiqueEntrySchema = z.object({
   timestamp: z.string(),
 });
 
+// NOTE: `strategies` + best_* fields are validated loosely via z.any() so we
+// don't need forward refs to the strategy schemas that appear below.
+// the strategy-scoring runtime does its own StrategiesConfigSchema.parse
+// on load anyway (see lint.ts), so the persistence shape just has to pass.
 export const SnowballSchema = z.object({
   invariants: InvariantsSchema,
   draft: z.string(),
   critique_trail: z.array(CritiqueEntrySchema),
   resolved_decisions: z.array(z.string()),
   human_directives: z.array(z.string()),
+  strategies: z.any().optional(),
+  best_draft: z.string().optional(),
+  best_scoring: z.any().optional(),
+  aggregate_history: z.array(z.number()).optional(),
 });
 
 export const HistoryEntrySchema = z.object({
