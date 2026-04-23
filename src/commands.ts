@@ -20,7 +20,8 @@ export function status(dir: string): void {
   }
 
   const snowball = latest.snowball;
-  const word_count = snowball.draft.split(/\s+/).length;
+  const draft_for_count = snowball.best_draft ?? snowball.draft;
+  const word_count = draft_for_count.split(/\s+/).length;
   const accepted = files.filter((f) => {
     try {
       const entry = JSON.parse(readFileSync(f.path, "utf-8"));
@@ -33,8 +34,40 @@ export function status(dir: string): void {
   log(`step:       ${latest.step} (${latest.actor}/${latest.action})`);
   log(`status:     ${latest.status}`);
   log(`history:    ${files.length} entries (${accepted} accepted, ${rejected} rejected/other)`);
-  log(`invariants: ${snowball.invariants.MUST.length} MUST, ${snowball.invariants.SHOULD.length} SHOULD, ${snowball.invariants.MUST_NOT.length} MUST NOT`);
-  log(`draft:      ${word_count} words, ${snowball.draft.length} chars`);
+
+  // strategies panel (phase 1 of #42)
+  const strategies = snowball.strategies;
+  const configured = strategies ? Object.keys(strategies) : [];
+  if (configured.length > 0) {
+    log(`strategies: ${configured.join(", ")}`);
+    if (strategies?.invariants) {
+      const inv = strategies.invariants;
+      log(`  invariants: ${inv.MUST.length} MUST, ${inv.SHOULD.length} SHOULD, ${inv.MUST_NOT.length} MUST NOT`);
+    }
+    if (strategies?.rubric) {
+      const dims = strategies.rubric.dimensions.map((d: any) => d.name).join(", ");
+      log(`  rubric:     ${strategies.rubric.dimensions.length} dims (${dims})`);
+    }
+    if (strategies?.color) {
+      log(`  color:      ${strategies.color.question}`);
+    }
+  } else {
+    // legacy fallback — show old invariants shape if it exists
+    const inv = snowball.invariants;
+    log(`invariants: ${inv.MUST.length} MUST, ${inv.SHOULD.length} SHOULD, ${inv.MUST_NOT.length} MUST NOT (legacy shape)`);
+  }
+
+  const best = snowball.best_scoring;
+  if (best) {
+    log(`best:       aggregate=${best.weighted_aggregate.toFixed(3)}${best.color_tier ? ` tier=${best.color_tier}` : ""}`);
+  }
+  const history = snowball.aggregate_history ?? [];
+  if (history.length > 0) {
+    const trajectory = history.map((n: number) => n.toFixed(2)).join(" → ");
+    log(`trajectory: ${trajectory}`);
+  }
+
+  log(`draft:      ${word_count} words, ${draft_for_count.length} chars`);
   log(`trail:      ${snowball.critique_trail.length} critiques`);
   log(`decisions:  ${snowball.resolved_decisions.length} compacted`);
   log(`directives: ${snowball.human_directives.length} human`);
@@ -50,7 +83,11 @@ export function export_draft(dir: string): void {
     throw new JoustUserError("no history found — run 'joust init' first");
   }
 
-  process.stdout.write(latest.snowball.draft);
+  // phase 1 of #42: emit best_draft when available, otherwise fall back
+  // to the current draft. best_draft may be absent on legacy runs or
+  // runs that never completed a scoring pass.
+  const out = latest.snowball.best_draft ?? latest.snowball.draft;
+  process.stdout.write(out);
 }
 
 // --- joust diff ---
@@ -137,20 +174,24 @@ export function plan(dir: string): void {
   const max_retries = config.defaults.max_retries;
 
   const latest = read_latest_history(dir);
-  const draft_chars = latest ? latest.snowball.draft.length : 5000; // estimate for new runs
+  const draft_chars = latest ? (latest.snowball.best_draft?.length ?? latest.snowball.draft.length) : 5000;
   const draft_tokens = Math.ceil(draft_chars / 4);
 
-  // per round: each jouster does mutation + lint, main does polish
-  // each call sends ~draft + context overhead
-  const context_overhead = 2000; // tokens for system prompt, invariants, trail summary
+  // how many scoring passes per mutation? one per configured strategy.
+  // legacy runs (or never-bootstrapped) fall back to 1 (counts as the
+  // old single-lint pass).
+  const strategy_count = Math.max(1, Object.keys(latest?.snowball.strategies ?? {}).length);
+
+  const context_overhead = 2000;
   const tokens_per_call = draft_tokens + context_overhead;
 
-  const jouster_calls_per_round = jousters.length * (1 + 1); // mutation + lint per jouster
-  const polish_calls = 1;
-  const calls_per_round = jouster_calls_per_round + polish_calls;
+  // per jouster: 1 mutation call + strategy_count scoring calls
+  // plus: 1 polish call + strategy_count scoring calls per round
+  const jouster_calls_per_round = jousters.length * (1 + strategy_count);
+  const polish_calls_per_round = 1 + strategy_count;
+  const calls_per_round = jouster_calls_per_round + polish_calls_per_round;
   const total_calls = calls_per_round * max_rounds;
   const total_input_tokens = total_calls * tokens_per_call;
-  // output is roughly draft size for mutations, small for lint
   const total_output_tokens = Math.ceil(total_input_tokens * 0.5);
 
   log(`=== joust plan ===`);
@@ -158,6 +199,7 @@ export function plan(dir: string): void {
   for (const j of jousters) {
     log(`  - ${j.name} (${j.model})`);
   }
+  log(`strategies: ${strategy_count} (${Object.keys(latest?.snowball.strategies ?? {}).join(", ") || "(legacy)"})`);
   log(`rounds: ${max_rounds} | retries: ${max_retries}/agent`);
   log(`draft:  ~${draft_tokens} tokens (${draft_chars} chars)`);
   log(`calls:  ~${total_calls} API calls (${calls_per_round}/round)`);
@@ -166,8 +208,8 @@ export function plan(dir: string): void {
 
   // cost breakdown by model
   const model_usage: Record<string, { input: number; output: number }> = {};
-  // main: lint + polish calls
-  const main_calls = (jousters.length + 1) * max_rounds; // lint per jouster + polish
+  // main: strategy scoring (per jouster mutation + per polish) + polish itself
+  const main_calls = (jousters.length * strategy_count + polish_calls_per_round) * max_rounds;
   const main_key = main.model;
   model_usage[main_key] = {
     input: (model_usage[main_key]?.input ?? 0) + main_calls * tokens_per_call,

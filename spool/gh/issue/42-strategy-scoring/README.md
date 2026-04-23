@@ -27,11 +27,12 @@ Phase 1 of the epic, split into commit-sized steps. Each step ends with green te
 - **[step 4]** `color` strategy. Commit: `8ff4895`.
 - **[step 5]** lint dispatcher. Commit: `99e04e5`.
 - **[step 6]** `run.ts` rewrite. Commit: `a84fbeb`.
-- **[step 7]** `init.ts` bootstraps strategies. `bootstrap_strategies(main, prompt)` runs every registered strategy's `bootstrap()` in parallel, collects the non-null results into a `StrategiesConfig`, and persists it into `snowball.strategies`. Errors in one strategy's bootstrap don't kill the others (per-strategy try/catch + null on failure). The seed snowball now carries `strategies`, `best_draft`, `aggregate_history` from the start. Init log reports which strategies applied. Tests (3 new) — all-decline returns empty, mixed results filter correctly, error-resilience. `./dev/test` 117 pass. Commit: _pending_.
+- **[step 7]** `init.ts` bootstraps strategies. Commit: `9c53f2e`.
+- **[step 8]** migration + commands.ts. `status` shows per-strategy panel + best aggregate + trajectory; falls back to legacy invariants-only shape if no strategies yet. `export` emits `best_draft` (fallback to current draft). `plan` estimates N scoring passes per mutation (one per configured strategy). Added realistic-legacy-entry round-trip test to `run.test.ts`. `./dev/test` 118 pass, `bun build` 243 modules OK, `./dev/post_flight` green. Commit: _pending_.
 
 ## Next
 
-**Step 8 — migration + `check_context_size` fix.** `migrate_snowball` in run.ts already handles legacy entries on load. Add: `src/context.ts` `check_context_size` currently references `snowball.invariants.MUST.length` in its warning — it's actually NOT broken (token estimation is unchanged), so this step is smaller than I thought. Also — `src/commands.ts` (status/plan/export/diff) references `snowball.invariants`. Update status/plan to show strategies instead. Verify migration round-trip test with a legacy JSON fixture. Final smoke: `./dev/post_flight` green.
+**Step 9 — final check + smoke.** Re-read every touched file for inconsistencies. Scan for stale references to the old legacy-only lint shape. Verify the binary `joust` runs (`--help` at minimum). Update `spool/gh/issue/42-strategy-scoring/README.md` with the final "Done" state + promotion notes. Close out the plan; the issue can now be marked ready for promotion/review.
 
 ## Deferred
 

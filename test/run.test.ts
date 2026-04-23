@@ -75,4 +75,45 @@ describe("migrate_snowball", () => {
     });
     expect(out.best_draft).toBe("hello");
   });
+
+  test("round-trips a realistic legacy history entry", () => {
+    // simulate reading an old history JSON that predates strategies
+    const legacy_raw = {
+      step: 5,
+      actor: "ivy",
+      action: "mutation",
+      status: "accepted",
+      timestamp: "2026-04-10T12:00:00Z",
+      snowball: {
+        invariants: {
+          MUST: ["atomic writes"],
+          SHOULD: ["prefer bun apis"],
+          MUST_NOT: ["add node-only deps"],
+        },
+        draft: "# RFC: storage layer\n...",
+        critique_trail: [
+          {
+            actor: "ivy",
+            action: "mutated_draft",
+            notes: "tightened error handling",
+            timestamp: "2026-04-10T11:59:00Z",
+          },
+        ],
+        resolved_decisions: [],
+        human_directives: [],
+      },
+    };
+    // parse as a Snowball (no new fields)
+    const snow: Snowball = legacy_raw.snowball as any;
+    // no strategies / best_draft / history originally
+    expect((snow as any).strategies).toBeUndefined();
+    // after migration, the entry is usable
+    const migrated = _migrate_snowball(snow);
+    expect(migrated.strategies?.invariants?.MUST).toEqual(["atomic writes"]);
+    expect(migrated.best_draft).toBe(snow.draft);
+    expect(migrated.aggregate_history).toEqual([]);
+    // legacy fields preserved unchanged
+    expect(migrated.draft).toBe(snow.draft);
+    expect(migrated.critique_trail).toEqual(snow.critique_trail);
+  });
 });
