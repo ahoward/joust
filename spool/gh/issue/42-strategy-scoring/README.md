@@ -23,11 +23,12 @@ Phase 1 of the epic, split into commit-sized steps. Each step ends with green te
 
 - **[step 1]** types + Strategy interface. Added fib scale, Scorecard, StrategiesConfig, Strategy<N> + registry in `src/types.ts` and `src/strategies/index.ts`. Tests: 72 pass. Commit: `11f3654`.
 - **[step 2]** `invariants` strategy. `src/strategies/invariants.ts` + 9 tests. Bootstrap classifies+extracts; score marks met/not-met and maps to fib floors. Commit: `3d01093`.
-- **[step 3]** `rubric` strategy. `src/strategies/rubric.ts` + 8 tests. Bootstrap proposes 4-8 dims tailored to the prompt (name, description, weight 1-5); score rates each dim on fib scale. No floors. Aggregate is normalized weighted mean. `./dev/test` 89 pass. Commit: _pending_.
+- **[step 3]** `rubric` strategy. `src/strategies/rubric.ts` + 8 tests. Commit: `865e6f3`.
+- **[step 4]** `color` strategy. `src/strategies/color.ts` + 6 tests. Single-dim red/yellow/green, `max=2, floor=1`. Scorecard carries `color_tier` for lexicographic comparison in lint/run. `./dev/test` 95 pass. Commit: _pending_.
 
 ## Next
 
-**Step 4 — color strategy.** Implement `src/strategies/color.ts`. Bootstrap: LLM decides if a categorical judgment applies, and if so, generates a `question`. Score: LLM answers red/yellow/green with rationale. Scale `red=0, yellow=1, green=2`. Single dim: `max: 2, floor: 1` (below yellow = red = hard fail). Scorecard carries `color_tier` for lexicographic comparison. Tests with fake agent stubs.
+**Step 5 — rewrite `src/lint.ts` as a strategy dispatcher.** New function `score_draft(main, strategies_config, snowball, candidate)` that: loads each configured strategy via `get_strategy()`, calls `score()` on each, aggregates into `ScoringResult` (mean of per-strategy aggregates, color_tier extracted, floor violations collected). Must import the three strategy modules so they self-register. Keep the old `lint_mutation` callable for back-compat until step 6 switches `run.ts`. Tests: mocked-strategy dispatch, floor violations detected, color tier plumbed through.
 
 ## Deferred
 
