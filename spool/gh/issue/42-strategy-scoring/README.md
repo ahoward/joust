@@ -21,11 +21,12 @@ Phase 1 of the epic, split into commit-sized steps. Each step ends with green te
 
 ## Done
 
-- **[step 1]** types + Strategy interface. Added `FIB_SCALE`, `FibScore`, `DimensionScore`, `Scorecard`, `ScoringResult`, and `StrategiesConfig` (with sub-schemas for `rubric`, `invariants`, `color`) to `src/types.ts`. Created `src/strategies/index.ts` with the `Strategy<N>` interface + per-strategy registry. Added `test/strategies.test.ts` (16 cases — fib-scale validation, scorecard shape, config shape, registry semantics). No behavior change; `./dev/test` 72 pass. Commit: _pending this commit_. Verified: `./dev/test` green.
+- **[step 1]** types + Strategy interface. Added fib scale, Scorecard, StrategiesConfig, Strategy<N> + registry in `src/types.ts` and `src/strategies/index.ts`. Tests: 72 pass. Commit: `11f3654`.
+- **[step 2]** `invariants` strategy. Implemented `src/strategies/invariants.ts` with `create_invariants_strategy({ bootstrap_call, score_call })` factory (test-injectable) + pre-built `invariants_strategy` instance that self-registers. Bootstrap: LLM classifies whether invariants apply; if yes, extracts verbatim MUST/SHOULD/MUST_NOT; returns null otherwise. Score: LLM marks each rule met/not-met → MUST & MUST_NOT get `score: 0|13, floor: 13`, SHOULD gets `score: 0|13, no floor`. Aggregate is normalized weighted mean. Tests (9 new): bootstrap applicability + null-returns, all-met, MUST violation surfacing, SHOULD no-floor, MUST_NOT, missing-score fallback, empty-config case. `./dev/test` 81 pass. Commit: _pending_.
 
 ## Next
 
-**Step 2 — invariants strategy.** Implement `src/strategies/invariants.ts`. Bootstrap: call main with the prompt, extract `MUST/SHOULD/MUST_NOT` (same structured-output pattern as current `BootstrapResultSchema`). Score: each MUST/MUST_NOT → `{ max:13, floor:13 }`; each SHOULD → `{ max:13, no floor }`. `register_strategy()` on import. Unit tests with a fake agent stub so the test runs offline.
+**Step 3 — rubric strategy.** Implement `src/strategies/rubric.ts`. Bootstrap: LLM proposes 4–8 dims with weights tailored to the prompt; always applies (returns null only if the prompt is an invariants-only compliance ask). Score: LLM rates each dim on fib scale with rationale. Aggregate normalized weighted mean. No floors by default. Tests follow the same pattern as invariants — factory with override hooks, offline.
 
 ## Deferred
 
