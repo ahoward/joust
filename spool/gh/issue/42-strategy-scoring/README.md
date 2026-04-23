@@ -22,11 +22,12 @@ Phase 1 of the epic, split into commit-sized steps. Each step ends with green te
 ## Done
 
 - **[step 1]** types + Strategy interface. Added fib scale, Scorecard, StrategiesConfig, Strategy<N> + registry in `src/types.ts` and `src/strategies/index.ts`. Tests: 72 pass. Commit: `11f3654`.
-- **[step 2]** `invariants` strategy. Implemented `src/strategies/invariants.ts` with `create_invariants_strategy({ bootstrap_call, score_call })` factory (test-injectable) + pre-built `invariants_strategy` instance that self-registers. Bootstrap: LLM classifies whether invariants apply; if yes, extracts verbatim MUST/SHOULD/MUST_NOT; returns null otherwise. Score: LLM marks each rule met/not-met → MUST & MUST_NOT get `score: 0|13, floor: 13`, SHOULD gets `score: 0|13, no floor`. Aggregate is normalized weighted mean. Tests (9 new): bootstrap applicability + null-returns, all-met, MUST violation surfacing, SHOULD no-floor, MUST_NOT, missing-score fallback, empty-config case. `./dev/test` 81 pass. Commit: _pending_.
+- **[step 2]** `invariants` strategy. `src/strategies/invariants.ts` + 9 tests. Bootstrap classifies+extracts; score marks met/not-met and maps to fib floors. Commit: `3d01093`.
+- **[step 3]** `rubric` strategy. `src/strategies/rubric.ts` + 8 tests. Bootstrap proposes 4-8 dims tailored to the prompt (name, description, weight 1-5); score rates each dim on fib scale. No floors. Aggregate is normalized weighted mean. `./dev/test` 89 pass. Commit: _pending_.
 
 ## Next
 
-**Step 3 — rubric strategy.** Implement `src/strategies/rubric.ts`. Bootstrap: LLM proposes 4–8 dims with weights tailored to the prompt; always applies (returns null only if the prompt is an invariants-only compliance ask). Score: LLM rates each dim on fib scale with rationale. Aggregate normalized weighted mean. No floors by default. Tests follow the same pattern as invariants — factory with override hooks, offline.
+**Step 4 — color strategy.** Implement `src/strategies/color.ts`. Bootstrap: LLM decides if a categorical judgment applies, and if so, generates a `question`. Score: LLM answers red/yellow/green with rationale. Scale `red=0, yellow=1, green=2`. Single dim: `max: 2, floor: 1` (below yellow = red = hard fail). Scorecard carries `color_tier` for lexicographic comparison. Tests with fake agent stubs.
 
 ## Deferred
 
