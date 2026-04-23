@@ -21,11 +21,11 @@ Phase 1 of the epic, split into commit-sized steps. Each step ends with green te
 
 ## Done
 
-_none yet_
+- **[step 1]** types + Strategy interface. Added `FIB_SCALE`, `FibScore`, `DimensionScore`, `Scorecard`, `ScoringResult`, and `StrategiesConfig` (with sub-schemas for `rubric`, `invariants`, `color`) to `src/types.ts`. Created `src/strategies/index.ts` with the `Strategy<N>` interface + per-strategy registry. Added `test/strategies.test.ts` (16 cases — fib-scale validation, scorecard shape, config shape, registry semantics). No behavior change; `./dev/test` 72 pass. Commit: _pending this commit_. Verified: `./dev/test` green.
 
 ## Next
 
-**Step 1 — types + Strategy interface.** Add `Scorecard`, `LintResult`, `StrategiesConfig` to `src/types.ts`. Create `src/strategies/index.ts` with the `Strategy` interface definition. No behavior change. `bun run typecheck` + existing `./dev/test` pass.
+**Step 2 — invariants strategy.** Implement `src/strategies/invariants.ts`. Bootstrap: call main with the prompt, extract `MUST/SHOULD/MUST_NOT` (same structured-output pattern as current `BootstrapResultSchema`). Score: each MUST/MUST_NOT → `{ max:13, floor:13 }`; each SHOULD → `{ max:13, no floor }`. `register_strategy()` on import. Unit tests with a fake agent stub so the test runs offline.
 
 ## Deferred
 
