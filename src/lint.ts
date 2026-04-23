@@ -1,34 +1,25 @@
-// lint — strategy dispatcher (step 5 of #42).
+// lint — strategy dispatcher (phase 1 of #42).
 //
-// given a candidate draft and a StrategiesConfig, run every configured
-// strategy's score() in parallel and aggregate into a ScoringResult.
+// given a candidate draft and a StrategiesConfig, runs every configured
+// strategy's score() in parallel and aggregates into a ScoringResult.
 // a run fails if any dim scored < its floor.
 //
 // the strategy modules self-register via `import`; importing this file
 // pulls them in. lint is the only module that needs to know the full
 // set of built-in strategies.
-//
-// the legacy `lint_mutation` function is preserved at the bottom of this
-// file for transitional use by run.ts. step 6 migrates run.ts to call
-// score_draft() directly and deletes lint_mutation.
 
 import "./strategies/invariants";
 import "./strategies/rubric";
 import "./strategies/color";
 
-import { call_agent_structured } from "./ai";
-import { compile_context } from "./context";
 import { get_strategy } from "./strategies";
-import { log_status } from "./utils";
-import {
-  LintResultSchema,
-  type AgentConfig,
-  type LintResult,
-  type Scorecard,
-  type ScoringResult,
-  type Snowball,
-  type StrategiesConfig,
-  type Violation,
+import type {
+  AgentConfig,
+  Scorecard,
+  ScoringResult,
+  Snowball,
+  StrategiesConfig,
+  Violation,
 } from "./types";
 
 // --- collect floor violations from all scorecards ---
@@ -143,41 +134,3 @@ export function compare_results(a: ScoringResult, b: ScoringResult): number {
   return 0;
 }
 
-// --- legacy lint_mutation (kept intact; step 6 migrates run.ts) ---
-
-export async function lint_mutation(
-  main_agent: AgentConfig,
-  snowball: Snowball,
-  mutated_draft: string
-): Promise<LintResult> {
-  log_status("main", "linting mutation against invariants...");
-
-  const messages = compile_context(main_agent, snowball, "lint", { mutated_draft });
-
-  const result = await call_agent_structured(main_agent, messages, LintResultSchema);
-
-  if (!result.valid) {
-    log_status("main", `lint FAILED: ${result.violations.join("; ")}`);
-    return result;
-  }
-
-  const unjustified = (result.should_violations ?? []).filter((v) => !v.justified);
-  if (unjustified.length > 0) {
-    const reasons = unjustified.map((v) => v.rule);
-    log_status("main", `lint FAILED (unjustified SHOULD): ${reasons.join("; ")}`);
-    return {
-      ...result,
-      valid: false,
-      violations: [...result.violations, ...reasons.map((r) => `SHOULD: ${r} (unjustified)`)],
-    };
-  }
-
-  const justified = (result.should_violations ?? []).filter((v) => v.justified);
-  if (justified.length > 0) {
-    log_status("main", `lint passed (${justified.length} justified SHOULD violations)`);
-  } else {
-    log_status("main", "lint passed");
-  }
-
-  return result;
-}

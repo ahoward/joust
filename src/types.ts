@@ -107,20 +107,6 @@ export interface JoustConfig {
   agents: Record<string, AgentConfig>;
 }
 
-// --- lint result (zod schema for structured output) ---
-
-export const LintResultSchema = z.object({
-  valid: z.boolean().describe("true if the draft respects all MUST invariants, false if any MUST rules are violated"),
-  violations: z.array(z.string()).describe("list of specific MUST invariant violations found, empty if valid"),
-  should_violations: z.array(z.object({
-    rule: z.string().describe("the SHOULD rule that was violated"),
-    justified: z.boolean().describe("true if the jouster provided acceptable justification for the violation"),
-    justification: z.string().optional().describe("the jouster's justification for violating this SHOULD rule"),
-  })).optional().describe("SHOULD violations — these do not invalidate the draft if justified"),
-});
-
-export type LintResult = z.infer<typeof LintResultSchema>;
-
 // --- bootstrap result (zod schema for structured output from main) ---
 
 export const BootstrapResultSchema = z.object({
@@ -203,9 +189,7 @@ export interface Violation {
   rationale: string;
 }
 
-// aggregate lint output across all configured strategies. this replaces
-// the single-strategy `LintResult` once step 5 lands; until then it
-// coexists under a distinct name.
+// aggregate lint output across all configured strategies.
 export interface ScoringResult {
   scorecards: Scorecard[];
   weighted_aggregate: number;      // mean of per-strategy aggregates

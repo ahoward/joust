@@ -12,7 +12,7 @@ Format: bullet list grouped by agent (or `shared`), one line per guardrail plus 
 - **Do not use tgz archives for spool closure.** Rejected on #45. Move issue dirs to `spool/<tracker>/issue/archive/<id>-<slug>/` intact. *Why:* archives must be grep-able, browsable, and linkable from the issue body — tgz breaks all three.
 - **Do not put agent-specific state in `~/.claude/...` or equivalent.** Agent decisions and guardrails live in `./spool/agents/`. *Why:* team collaboration requires shared, in-repo surfaces; hidden per-user files can't be shared.
 - **Do not run parallel work within a spool.** Rejected on #45. One loose end at a time. *Why:* parallel edits create conflicts agents can't reason about and split-context produces inconsistent decisions.
-- **Do not describe `rfc.yaml` in new work.** The config file is `config.json`. Stale comments in the codebase are tracked in #44. *Why:* `rfc.yaml` never existed at runtime; it's a naming relic.
+- **Project config is `rfc.yaml` (YAML), not `config.json`.** Earlier spool drafts stated this wrong. `src/config.ts:91` reads `rfc.yaml`; `src/init.ts:117` writes it. Examples must use YAML shape, not JSON. (Issue #44 was filed under a false premise and will be closed.) *Why:* #44's claim that `rfc.yaml` is a "naming relic" is incorrect — it is the actual runtime config path.
 
 ## claude
 

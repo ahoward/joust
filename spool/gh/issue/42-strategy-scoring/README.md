@@ -1,7 +1,7 @@
 # #42 — Strategy-based scoring
 
 **Spec:** https://github.com/ahoward/joust/issues/42
-**Status:** in-progress
+**Status:** ready-for-review
 **Branch:** `strategy-scoring`
 
 ## Plan
@@ -28,11 +28,15 @@ Phase 1 of the epic, split into commit-sized steps. Each step ends with green te
 - **[step 5]** lint dispatcher. Commit: `99e04e5`.
 - **[step 6]** `run.ts` rewrite. Commit: `a84fbeb`.
 - **[step 7]** `init.ts` bootstraps strategies. Commit: `9c53f2e`.
-- **[step 8]** migration + commands.ts. `status` shows per-strategy panel + best aggregate + trajectory; falls back to legacy invariants-only shape if no strategies yet. `export` emits `best_draft` (fallback to current draft). `plan` estimates N scoring passes per mutation (one per configured strategy). Added realistic-legacy-entry round-trip test to `run.test.ts`. `./dev/test` 118 pass, `bun build` 243 modules OK, `./dev/post_flight` green. Commit: _pending_.
+- **[step 8]** migration + commands.ts. Commit: `01ccb4e`.
+- **[step 9]** cleanup. Removed legacy `lint_mutation` (zero callers); removed `LintResultSchema`/`LintResult` type (zero remaining uses). `src/context.ts::format_invariants` now prefers `snowball.strategies.invariants` with legacy fallback — jouster/polish system prompts stay accurate through the migration window. Binary compiles + `--help` smoke-test passes. Commit: _pending this commit_.
 
 ## Next
 
-**Step 9 — final check + smoke.** Re-read every touched file for inconsistencies. Scan for stale references to the old legacy-only lint shape. Verify the binary `joust` runs (`--help` at minimum). Update `spool/gh/issue/42-strategy-scoring/README.md` with the final "Done" state + promotion notes. Close out the plan; the issue can now be marked ready for promotion/review.
+Nothing. Phase 1 of #42 is implementation-complete. Remaining before close:
+1. **Review.** User reviews the branch. May request changes.
+2. **Integration.** Run `joust draft "some prompt" --workspace .` against a real agent panel to confirm end-to-end behavior (requires API keys). Cannot be automated from this session.
+3. **Promotion.** On close, promote what shipped into `spool/docs/strategies.md` (new file, canonical current-truth), append dated entries to `spool/agents/decisions.md`, archive this dir to `spool/gh/issue/archive/42-strategy-scoring/`. Per spool methodology.
 
 ## Deferred
 
