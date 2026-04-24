@@ -43,11 +43,12 @@ What needs real integration work (not transplant):
 ## Done
 
 - **[step 1]** types + Strategy interface. `./dev/test` 96 pass. Commit: `9ed83de`.
-- **[step 2]** `invariants` strategy. Transplanted `src/strategies/invariants.ts` + 9 tests verbatim. Module factory + pre-built + self-register pattern intact. `./dev/test` 105 pass. Commit: _pending_.
+- **[step 2]** `invariants` strategy. Commit: `bf09fce`.
+- **[step 3+4]** `rubric` and `color` strategies. Transplanted `src/strategies/rubric.ts` (+8 tests) and `src/strategies/color.ts` (+6 tests). Both verbatim. `./dev/test` 119 pass. Commit: _pending_.
 
 ## Next
 
-**Step 3 — `rubric` strategy.** Transplant `src/strategies/rubric.ts` + tests.
+**Step 5 — `score_draft` + `compare_results` in `src/lint.ts`.** The previous branch replaced `lint.ts` entirely, but on the new main `lint_mutation` is load-bearing (used at the polish gate). Add `score_draft` and `compare_results` alongside it, plus the three `import "./strategies/…"` self-register lines. Thread `CallOptions` (tools/max_tool_steps/log_dir/log_label) through `score_draft` so scoring calls can use workspace tools. Tests for lint dispatcher (10 from old branch).
 
 ## Deferred
 
