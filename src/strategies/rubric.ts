@@ -14,7 +14,6 @@ import { call_agent_structured, type Message } from "../ai";
 import {
   RubricConfigSchema,
   FIB_SCALE,
-  FibScoreSchema,
   type RubricConfig,
   type Scorecard,
 } from "../types";
@@ -38,7 +37,12 @@ const RubricBootstrapSchema = z.object({
           .string()
           .describe("one short lowercase name, like 'clarity' or 'security'. no spaces preferred."),
         description: z.string().describe("one sentence on what this dim measures, written so a scorer can judge it"),
-        weight: z.number().int().min(1).max(5).default(1).describe("relative importance 1-5. most dims are 1; only boost the ones that really matter."),
+        // NOTE: must be z.number() (not .int()). zod 4's int emits
+        // minimum/maximum = MAX_SAFE_INTEGER bounds, which Anthropic's
+        // structured-output API rejects ("For 'integer' type, properties
+        // maximum, minimum are not supported"). We round + clamp at read
+        // time. The prompt asks for 1-5.
+        weight: z.number().default(1).describe("relative importance 1-5 (integer). most dims are 1; only boost the ones that really matter."),
       })
     )
     .default([])
@@ -47,9 +51,12 @@ const RubricBootstrapSchema = z.object({
 
 // --- score schema ---
 
+// LLM output for each dim: a loose number. We snap to the fib scale at
+// build time. Can't use FibScoreSchema here because zod 4 emits int
+// minimum/maximum bounds that Anthropic's API rejects.
 const RubricDimScoreSchema = z.object({
   name: z.string(),
-  score: FibScoreSchema,
+  score: z.number().describe("score on the fibonacci scale: 0, 1, 2, 3, 5, 8, 13"),
   rationale: z.string().describe("one or two sentences on why this score, citing the draft"),
 });
 
@@ -119,7 +126,9 @@ async function bootstrap_rubric(
     dimensions: raw.dimensions.map((d) => ({
       name: d.name,
       description: d.description,
-      weight: d.weight,
+      // round + clamp to 1..5 since the LLM output is z.number() (not int)
+      // and the schema can't enforce bounds — see the schema comment.
+      weight: Math.max(1, Math.min(5, Math.round(d.weight))),
       max: 13,
     })),
   });
@@ -187,6 +196,13 @@ async function default_score_call(
   );
 }
 
+// snap an arbitrary LLM-returned number to the nearest fib-scale value.
+function snap_to_fib(n: number): number {
+  const FIB = [0, 1, 2, 3, 5, 8, 13];
+  if (!Number.isFinite(n)) return 0;
+  return FIB.reduce((best, v) => (Math.abs(v - n) < Math.abs(best - n) ? v : best), FIB[0]!);
+}
+
 function build_scorecard(
   cfg: RubricConfig,
   raw: z.infer<typeof RubricScoringSchema>
@@ -198,7 +214,7 @@ function build_scorecard(
     const hit = by_name.get(d.name);
     return {
       name: d.name,
-      score: hit?.score ?? 0,
+      score: hit ? snap_to_fib(hit.score) : 0,
       max: d.max,
       weight: d.weight,
       rationale: hit?.rationale ?? `(no score returned for ${d.name})`,
