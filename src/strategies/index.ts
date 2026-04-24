@@ -4,12 +4,12 @@
 //   - bootstrap: produce its config block from the user's prompt
 //   - score:     rate a draft against that config, returning a Scorecard
 //
-// strategies are stateless; their config lives in rfc.yaml under
+// strategies are stateless; their config lives in config.json under
 // `strategies.<name>`, and their scoring runs through the main agent
 // (same LLM pattern as existing lint/polish). nothing here performs I/O
 // or network calls directly — callers provide the agent handle.
 
-import type { z } from "zod";
+import type { ToolSet } from "ai";
 import type {
   AgentConfig,
   Scorecard,
@@ -20,19 +20,33 @@ import type {
 // the name a strategy is registered under. phase 1 ships three.
 export type StrategyName = "rubric" | "invariants" | "color";
 
-// the subset of StrategiesConfig a single strategy's bootstrap() can produce.
-// e.g. rubric.bootstrap returns a RubricConfig or null (not-applicable).
-export interface BootstrapContext {
-  prompt: string;
-  main: AgentConfig;
+// shared options the runtime passes through to each agent call the
+// strategy makes (workspace tools, tool-step cap, logging sink, label).
+// strategies forward these to `call_agent_structured` so bootstrap /
+// score calls can read files from the workspace and log to the same
+// per-agent log dir as the rest of the run.
+export interface StrategyCallOptions {
   signal?: AbortSignal;
+  tools?: ToolSet;
+  max_tool_steps?: number;
+  log_dir?: string;
+  log_label?: string;
 }
 
-export interface ScoreContext {
+// context for a strategy's bootstrap() call. the prompt is the raw user
+// prompt; main is the agent that does the classification.
+export interface BootstrapContext extends StrategyCallOptions {
+  prompt: string;
+  main: AgentConfig;
+}
+
+// context for a strategy's score() call. the snowball gives access to
+// critique trail / resolved decisions; candidate_draft is the text
+// being judged.
+export interface ScoreContext extends StrategyCallOptions {
   main: AgentConfig;
   snowball: Snowball;
   candidate_draft: string;
-  signal?: AbortSignal;
 }
 
 // the per-strategy typed config. this maps a strategy name to the shape

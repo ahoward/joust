@@ -93,7 +93,13 @@ async function default_bootstrap_call(
     ctx.main,
     messages,
     RubricBootstrapSchema,
-    { signal: ctx.signal }
+    {
+      signal: ctx.signal,
+      tools: ctx.tools,
+      max_tool_steps: ctx.max_tool_steps,
+      log_dir: ctx.log_dir,
+      log_label: ctx.log_label ?? "rubric:bootstrap",
+    }
   );
 }
 
@@ -171,7 +177,13 @@ async function default_score_call(
     ctx.main,
     messages,
     RubricScoringSchema,
-    { signal: ctx.signal }
+    {
+      signal: ctx.signal,
+      tools: ctx.tools,
+      max_tool_steps: ctx.max_tool_steps,
+      log_dir: ctx.log_dir,
+      log_label: ctx.log_label ?? "rubric:score",
+    }
   );
 }
 

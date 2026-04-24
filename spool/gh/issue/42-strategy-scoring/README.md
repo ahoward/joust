@@ -44,11 +44,12 @@ What needs real integration work (not transplant):
 
 - **[step 1]** types + Strategy interface. `./dev/test` 96 pass. Commit: `9ed83de`.
 - **[step 2]** `invariants` strategy. Commit: `bf09fce`.
-- **[step 3+4]** `rubric` and `color` strategies. Transplanted `src/strategies/rubric.ts` (+8 tests) and `src/strategies/color.ts` (+6 tests). Both verbatim. `./dev/test` 119 pass. Commit: _pending_.
+- **[step 3+4]** `rubric` and `color` strategies. Commit: `11fd156`.
+- **[step 5]** `score_draft` + `compare_results` added to `src/lint.ts`. Extended `StrategyCallOptions` interface in `src/strategies/index.ts` to carry `tools`/`max_tool_steps`/`log_dir`/`log_label`. All three strategy modules forward these into `call_agent_structured` so scoring calls can use workspace tools and write to per-agent log dirs. `BootstrapContext` and `ScoreContext` extend `StrategyCallOptions`. `lint_mutation` preserved unchanged. Transplanted `test/lint.test.ts` (10 cases) for dispatch + compare. `./dev/test` 129 pass. Commit: _pending_.
 
 ## Next
 
-**Step 5 — `score_draft` + `compare_results` in `src/lint.ts`.** The previous branch replaced `lint.ts` entirely, but on the new main `lint_mutation` is load-bearing (used at the polish gate). Add `score_draft` and `compare_results` alongside it, plus the three `import "./strategies/…"` self-register lines. Thread `CallOptions` (tools/max_tool_steps/log_dir/log_label) through `score_draft` so scoring calls can use workspace tools. Tests for lint dispatcher (10 from old branch).
+**Step 6 — wire `score_draft` into `src/run.ts`.** The current run.ts uses `lint_mutation` at both the jouster accept gate and the polish gate. Strategy scoring runs *after* lint (lint already ran — don't re-run it). Best-so-far tracking: extend Snowball with optional `strategies`, `best_draft`, `best_scoring`, `aggregate_history`. Migration: `migrate_snowball` on load seeds `strategies.invariants` from the legacy `invariants` field. Plateau detection: aggregate_history tail of K+1 with improvements ≤ ε = 0.02 ends the loop. Specialist summon passes also get scored (keep-if-better semantics).
 
 ## Deferred
 
