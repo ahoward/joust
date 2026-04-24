@@ -42,11 +42,12 @@ What needs real integration work (not transplant):
 
 ## Done
 
-- **[step 1]** types + Strategy interface. Transplanted `FIB_SCALE`, `FibScore`, `DimensionScore`, `Scorecard`, `ScoringResult`, `Violation`, and `StrategiesConfig` (with sub-schemas) to `src/types.ts`. Created `src/strategies/index.ts` with `Strategy<N>` interface + per-strategy registry. Transplanted `test/strategies.test.ts` (16 cases). Comment updated to say `config.json` not `rfc.yaml`. No behavior change; `./dev/test` 96 pass (was 80). Commit: _pending_.
+- **[step 1]** types + Strategy interface. `./dev/test` 96 pass. Commit: `9ed83de`.
+- **[step 2]** `invariants` strategy. Transplanted `src/strategies/invariants.ts` + 9 tests verbatim. Module factory + pre-built + self-register pattern intact. `./dev/test` 105 pass. Commit: _pending_.
 
 ## Next
 
-**Step 2 — `invariants` strategy.** Transplant `src/strategies/invariants.ts` + tests. The module's `default_bootstrap_call` and `default_score_call` functions use `call_agent_structured(agent, messages, schema, { signal })` — still valid on the new main (extra optional fields tolerated). Verify tests pass.
+**Step 3 — `rubric` strategy.** Transplant `src/strategies/rubric.ts` + tests.
 
 ## Deferred
 
