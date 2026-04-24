@@ -14,7 +14,7 @@ import {
   detect_preset,
 } from "./config";
 import { create_workspace_tools } from "./tools";
-import { lint_mutation } from "./lint";
+import { lint_mutation, score_draft, compare_results } from "./lint";
 import { maybe_compact } from "./compact";
 import { tank_execute, parse_duration, is_timeboxed_out } from "./tank";
 import {
@@ -39,6 +39,9 @@ import {
   type Snowball,
   type HistoryEntry,
   type CritiqueEntry,
+  type ScoringResult,
+  type StrategiesConfig,
+  type AgentConfig,
 } from "./types";
 
 // --- orphan .tmp cleanup ---
@@ -53,6 +56,80 @@ function cleanup_tmp_files(dir: string): void {
         }
       }
     } catch {}
+  }
+}
+
+// --- strategy scoring helpers (phase 1 of #42) ---
+
+const PLATEAU_EPSILON = 0.02;
+const PLATEAU_K = 2;
+
+// a plateau is K+1 consecutive aggregates with no improvement > epsilon.
+// cheap to detect, no LLM calls.
+function is_plateau(history: number[]): boolean {
+  if (history.length < PLATEAU_K + 1) return false;
+  const recent = history.slice(-PLATEAU_K - 1);
+  const peak = recent[0]!;
+  for (let i = 1; i < recent.length; i++) {
+    if (recent[i]! - peak > PLATEAU_EPSILON) return false;
+  }
+  return true;
+}
+
+// legacy entries lack `strategies`/`best_*`. derive strategies.invariants
+// from the top-level legacy invariants so existing runs resume without
+// re-bootstrap. best_draft starts as the current draft.
+function migrate_snowball(snow: Snowball): Snowball {
+  if (snow.strategies) return snow;
+
+  const inv = snow.invariants;
+  const has_rules = inv.MUST.length + inv.SHOULD.length + inv.MUST_NOT.length > 0;
+  const strategies: StrategiesConfig = has_rules
+    ? { invariants: { MUST: inv.MUST, SHOULD: inv.SHOULD, MUST_NOT: inv.MUST_NOT } }
+    : {};
+
+  return {
+    ...snow,
+    strategies,
+    best_draft: snow.draft,
+    best_scoring: undefined,
+    aggregate_history: [],
+  };
+}
+
+// score a candidate via the configured strategies. returns null on
+// failure (network/parse errors) so the caller can fall back to legacy
+// lint-only semantics.
+async function score_candidate(
+  main: AgentConfig,
+  strategies: StrategiesConfig,
+  snowball: Snowball,
+  candidate_draft: string,
+  options: {
+    signal?: AbortSignal;
+    tools?: ToolSet;
+    max_tool_steps?: number;
+    log_dir?: string;
+    log_label?: string;
+    tank?: boolean;
+  }
+): Promise<ScoringResult | null> {
+  const run = async () =>
+    score_draft(main, strategies, snowball, candidate_draft, {
+      signal: options.signal,
+      tools: options.tools,
+      max_tool_steps: options.max_tool_steps,
+      log_dir: options.log_dir,
+      log_label: options.log_label,
+    });
+  if (options.tank) {
+    return await tank_execute("main", run);
+  }
+  try {
+    return await run();
+  } catch (err: any) {
+    log_status("main", `scoring error: ${err.message}`);
+    return null;
   }
 }
 
@@ -127,12 +204,17 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
     throw new Error(`no history found in ${dir}/history/ — run 'joust init' first`);
   }
 
-  let snowball = latest.snowball;
+  let snowball = migrate_snowball(latest.snowball);
   let step = next_step_number(dir);
+  const strategies = snowball.strategies ?? {};
+  const strategy_names = Object.keys(strategies);
 
   log(`\nresuming from step ${latest.step} (${latest.actor}/${latest.action})`);
   log(`draft: ${snowball.draft.length} chars`);
   log(`invariants: ${snowball.invariants.MUST.length} MUST, ${snowball.invariants.SHOULD.length} SHOULD, ${snowball.invariants.MUST_NOT.length} MUST NOT`);
+  if (strategy_names.length > 0) {
+    log(`strategies: ${strategy_names.join(", ")}`);
+  }
   log("");
 
   // timebox setup
@@ -294,6 +376,46 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             lint = await execute_lint();
           }
 
+          // strategy scoring gate — runs only when strategies are
+          // configured. for legacy runs (empty strategies), score_draft
+          // returns aggregate=1.0 and best never regresses, so semantics
+          // match the pre-strategy behavior.
+          let scoring: ScoringResult | null = null;
+          if (lint.valid && strategy_names.length > 0) {
+            scoring = await score_candidate(
+              main,
+              strategies,
+              snowball,
+              mutation.draft,
+              {
+                signal: abort_controller.signal,
+                tools: workspace_tools,
+                max_tool_steps,
+                log_dir: join(dir, "logs"),
+                log_label: `round ${round} step ${step} score (${jouster.name})`,
+                tank: options.tank,
+              }
+            );
+          }
+
+          // if strategies say no (floor violation) OR no-improvement-vs-best,
+          // mark the mutation as rejected. lint-only legacy runs skip this.
+          let strategy_rejected = false;
+          if (scoring) {
+            if (!scoring.passed) {
+              strategy_rejected = true;
+              const reasons = scoring.floor_violations.map(
+                (v) => `${v.strategy}/${v.dimension}: ${v.rationale}`
+              );
+              lint = { valid: false, violations: reasons };
+            } else if (snowball.best_scoring && compare_results(scoring, snowball.best_scoring) < 0) {
+              strategy_rejected = true;
+              const best = snowball.best_scoring;
+              const reason = `no improvement vs best (agg=${scoring.weighted_aggregate.toFixed(3)} vs best=${best.weighted_aggregate.toFixed(3)}${scoring.color_tier ? ` tier=${scoring.color_tier}` : ""})`;
+              lint = { valid: false, violations: [reason] };
+            }
+          }
+
           if (lint.valid) {
             // accept the mutation
             const critique_entry: CritiqueEntry = {
@@ -307,6 +429,11 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
               ...snowball,
               draft: mutation.draft,
               critique_trail: [...snowball.critique_trail, critique_entry],
+              // scoring-aware best-so-far tracking. when scoring succeeded
+              // and the candidate equaled-or-beat the best, promote it.
+              // otherwise preserve the existing best_draft/best_scoring.
+              best_draft: scoring ? mutation.draft : snowball.best_draft,
+              best_scoring: scoring ?? snowball.best_scoring,
             };
 
             const entry: HistoryEntry = {
@@ -322,7 +449,10 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
             step++;
             accepted = true;
 
-            log_success(`[${jouster.name}] accepted (attempt ${attempts})`);
+            const score_label = scoring
+              ? ` agg=${scoring.weighted_aggregate.toFixed(3)}${scoring.color_tier ? ` tier=${scoring.color_tier}` : ""}`
+              : "";
+            log_success(`[${jouster.name}] accepted (attempt ${attempts}${score_label})`);
 
             // --- summon a specialist if requested ---
             // only non-specialist agents (main/peer) can summon; specialists
@@ -576,6 +706,34 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           // lint failure during polish is non-fatal
         }
 
+        // strategy-score the polish. legacy (no strategies) → scoring is
+        // null and polish is always accepted as best_draft unchanged —
+        // matches pre-strategy behavior. with strategies, a regressing
+        // polish still writes the critique trail but does NOT overwrite
+        // best_draft/best_scoring.
+        let polish_scoring: ScoringResult | null = null;
+        if (strategy_names.length > 0) {
+          polish_scoring = await score_candidate(
+            main,
+            strategies,
+            snowball,
+            polish.draft,
+            {
+              signal: abort_controller.signal,
+              tools: workspace_tools,
+              max_tool_steps,
+              log_dir: join(dir, "logs"),
+              log_label: `round ${round} polish score`,
+              tank: options.tank,
+            }
+          );
+        }
+
+        const polish_is_best =
+          polish_scoring &&
+          polish_scoring.passed &&
+          (snowball.best_scoring ? compare_results(polish_scoring, snowball.best_scoring) >= 0 : true);
+
         const critique_entry: CritiqueEntry = {
           actor: "main",
           action: "polish",
@@ -587,6 +745,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           ...snowball,
           draft: polish.draft,
           critique_trail: [...snowball.critique_trail, critique_entry],
+          best_draft: polish_is_best ? polish.draft : snowball.best_draft,
+          best_scoring: polish_is_best ? polish_scoring! : snowball.best_scoring,
         };
 
         const entry: HistoryEntry = {
@@ -601,10 +761,35 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
         commit_state(dir, step, "main", entry);
         step++;
 
-        log_status("main", "polish complete");
+        if (polish_scoring) {
+          const score_label = `agg=${polish_scoring.weighted_aggregate.toFixed(3)}${polish_scoring.color_tier ? ` tier=${polish_scoring.color_tier}` : ""}`;
+          if (polish_is_best) {
+            log_status("main", `polish complete (${score_label}, new best)`);
+          } else {
+            log_status("main", `polish complete (${score_label}, kept previous best)`);
+          }
+        } else {
+          log_status("main", "polish complete");
+        }
       }
     } catch (err: any) {
       if (!signal_received) log_error(`[main] polish error: ${err.message}`);
+    }
+
+    // plateau detection — phase 1 of #42. when strategies are configured
+    // and the best_scoring aggregate hasn't improved across the last K+1
+    // rounds, end the run early. legacy runs (no scoring) skip this.
+    let plateaued = false;
+    if (strategy_names.length > 0 && snowball.best_scoring) {
+      const hist = [
+        ...(snowball.aggregate_history ?? []),
+        snowball.best_scoring.weighted_aggregate,
+      ];
+      snowball = { ...snowball, aggregate_history: hist };
+      if (is_plateau(hist)) {
+        plateaued = true;
+        log(`\nplateau detected (${PLATEAU_K} rounds without improvement of > ${PLATEAU_EPSILON}), ending run`);
+      }
     }
 
     // interactive pause
@@ -622,6 +807,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
         log("no feedback, continuing...");
       }
     }
+
+    if (plateaued) break;
   }
 
   // run summary to STDERR
@@ -629,7 +816,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   const elapsed_str = elapsed_s >= 60
     ? `${Math.floor(elapsed_s / 60)}m ${elapsed_s % 60}s`
     : `${elapsed_s}s`;
-  const word_count = snowball.draft.split(/\s+/).length;
+  const out_draft = snowball.best_draft ?? snowball.draft;
+  const word_count = out_draft.split(/\s+/).length;
   const trail_count = snowball.critique_trail.length;
   const must_count = snowball.invariants.MUST.length;
   const should_count = snowball.invariants.SHOULD.length;
@@ -642,10 +830,15 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   } else {
     log_header(`=== joust complete ===`);
     log(`steps: ${step} | invariants: ${must_count} MUST, ${should_count} SHOULD, ${must_not_count} MUST NOT`);
+    if (snowball.best_scoring) {
+      log(`best:  agg=${snowball.best_scoring.weighted_aggregate.toFixed(3)}${snowball.best_scoring.color_tier ? ` tier=${snowball.best_scoring.color_tier}` : ""}`);
+    }
     log(`draft: ${word_count} words | critiques: ${trail_count} | elapsed: ${elapsed_str}`);
 
     // final output to STDOUT (teed to logs/stdout.txt)
-    write_stdout(snowball.draft);
+    // prefer best_draft when strategy scoring tracked it; fall back to
+    // current draft for legacy runs that never scored.
+    write_stdout(out_draft);
   }
   } finally {
     if (timeout_id !== null) clearTimeout(timeout_id);
@@ -655,3 +848,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
     release_lock(dir);
   }
 }
+
+// --- exported for tests ---
+
+export const _is_plateau = is_plateau;
+export const _migrate_snowball = migrate_snowball;

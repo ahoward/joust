@@ -35,29 +35,31 @@ export function check_context_size(model: string, messages: Message[]): void {
 }
 
 // --- format invariants as text block ---
+//
+// prefers snowball.strategies.invariants when present (phase 1 of #42);
+// falls back to the legacy top-level `invariants` field for back-compat
+// with runs that haven't been bootstrapped through the strategies flow.
 
 function format_invariants(snowball: Snowball): string {
+  const strat_inv = snowball.strategies?.invariants as
+    | { MUST?: string[]; SHOULD?: string[]; MUST_NOT?: string[] }
+    | undefined;
+  const MUST = strat_inv?.MUST ?? snowball.invariants.MUST;
+  const SHOULD = strat_inv?.SHOULD ?? snowball.invariants.SHOULD;
+  const MUST_NOT = strat_inv?.MUST_NOT ?? snowball.invariants.MUST_NOT;
+
   const lines: string[] = [];
-
-  if (snowball.invariants.MUST.length > 0) {
+  if (MUST.length > 0) {
     lines.push("MUST:");
-    for (const rule of snowball.invariants.MUST) {
-      lines.push(`  - ${rule}`);
-    }
+    for (const rule of MUST) lines.push(`  - ${rule}`);
   }
-
-  if (snowball.invariants.SHOULD.length > 0) {
+  if (SHOULD.length > 0) {
     lines.push("SHOULD:");
-    for (const rule of snowball.invariants.SHOULD) {
-      lines.push(`  - ${rule}`);
-    }
+    for (const rule of SHOULD) lines.push(`  - ${rule}`);
   }
-
-  if (snowball.invariants.MUST_NOT.length > 0) {
+  if (MUST_NOT.length > 0) {
     lines.push("MUST NOT:");
-    for (const rule of snowball.invariants.MUST_NOT) {
-      lines.push(`  - ${rule}`);
-    }
+    for (const rule of MUST_NOT) lines.push(`  - ${rule}`);
   }
 
   return lines.join("\n");

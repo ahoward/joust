@@ -1,10 +1,16 @@
 import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
 import { tmpdir } from "os";
+import type { ToolSet } from "ai";
+import "./strategies/invariants";
+import "./strategies/rubric";
+import "./strategies/color";
+
 import { call_agent_structured } from "./ai";
 import { compile_context } from "./context";
 import { create_workspace_tools } from "./tools";
 import { resolve_config, get_main_agent, generate_default_config, detect_preset, type Preset } from "./config";
+import { get_strategy, list_strategies } from "./strategies";
 import {
   slugify,
   ensure_dir,
@@ -19,7 +25,58 @@ import {
   BootstrapResultSchema,
   type Snowball,
   type HistoryEntry,
+  type StrategiesConfig,
+  type StrategyName,
+  type AgentConfig,
 } from "./types";
+
+// --- strategies bootstrap (phase 1 of #42) ---
+//
+// runs each registered strategy's bootstrap() against the prompt. a
+// strategy that returns null is omitted from the final config. errors
+// in one strategy don't kill the others (per-strategy try/catch).
+async function bootstrap_strategies(
+  main: AgentConfig,
+  prompt: string,
+  options?: {
+    tools?: ToolSet;
+    max_tool_steps?: number;
+    log_dir?: string;
+    signal?: AbortSignal;
+  }
+): Promise<StrategiesConfig> {
+  const names = list_strategies();
+  log_status("main", `bootstrapping strategies: ${names.join(", ")}`);
+
+  const pairs = await Promise.all(
+    names.map(async (name) => {
+      const s = get_strategy(name as StrategyName);
+      try {
+        const cfg = await s.bootstrap({
+          prompt,
+          main,
+          tools: options?.tools,
+          max_tool_steps: options?.max_tool_steps,
+          log_dir: options?.log_dir,
+          signal: options?.signal,
+        });
+        return [name, cfg] as const;
+      } catch (err: any) {
+        log_status(name, `bootstrap error: ${err.message}`);
+        return [name, null] as const;
+      }
+    })
+  );
+
+  const out: StrategiesConfig = {};
+  for (const [name, cfg] of pairs) {
+    if (!cfg) continue;
+    if (name === "invariants") out.invariants = cfg as any;
+    else if (name === "rubric") out.rubric = cfg as any;
+    else if (name === "color") out.color = cfg as any;
+  }
+  return out;
+}
 
 // --- read prompt from $EDITOR ---
 
@@ -119,13 +176,27 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
     log_label: "bootstrap",
   });
 
-  // build the real snowball
+  // strategy bootstrap (phase 1 of #42) — ask each registered strategy
+  // whether it applies to this prompt and collect the config blocks.
+  const strategies = await bootstrap_strategies(main, prompt, {
+    tools: workspace_tools,
+    max_tool_steps,
+    log_dir: join(dir, "logs"),
+  });
+
+  // build the real snowball — legacy `invariants` kept in place for
+  // back-compat (lint_mutation and context.format_invariants read it).
+  // `strategies` is the new authoritative config for scoring; run.ts
+  // prefers it over the legacy top-level invariants via migrate_snowball.
   const snowball: Snowball = {
     invariants: result.invariants,
     draft: result.draft,
     critique_trail: [],
     resolved_decisions: [],
     human_directives: [],
+    strategies,
+    best_draft: result.draft,
+    aggregate_history: [],
   };
 
   // write config snapshot — auto-detect preset from env if not specified
@@ -154,7 +225,24 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
   for (const rule of snowball.invariants.MUST) log(`  MUST: ${rule}`);
   for (const rule of snowball.invariants.SHOULD) log(`  SHOULD: ${rule}`);
   for (const rule of snowball.invariants.MUST_NOT) log(`  MUST NOT: ${rule}`);
+  const strategy_names = Object.keys(strategies);
+  if (strategy_names.length > 0) {
+    log(`\nstrategies: ${strategy_names.join(", ")}`);
+    if (strategies.rubric) {
+      log(`  rubric dims:`);
+      for (const d of strategies.rubric.dimensions) {
+        log(`    ${d.name} (weight ${d.weight})${d.description ? `: ${d.description}` : ""}`);
+      }
+    }
+    if (strategies.color) {
+      log(`  color question: ${strategies.color.question}`);
+    }
+  }
   log(`\nready. review config and run: joust /run ${dir}/`);
 
   return dir;
 }
+
+// --- exported for tests ---
+
+export const _bootstrap_strategies = bootstrap_strategies;
