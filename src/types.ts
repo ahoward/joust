@@ -161,3 +161,101 @@ export type CompactionResult = z.infer<typeof CompactionResultSchema>;
 // --- agent role ---
 
 export type AgentRole = "jouster" | "lint" | "bootstrap" | "polish" | "compact" | "ask" | "specialist";
+
+// --- strategies (phase 1 of #42) ---
+//
+// a strategy is a scoring lens. drafts are evaluated against one or more
+// strategies; each produces a Scorecard. the loop compares drafts
+// lexicographically by (color_tier, weighted_aggregate).
+
+// fibonacci scale: 0, 1, 2, 3, 5, 8, 13. widely-spaced so LLM scorers
+// can't cluster in the middle; boolean "met/not-met" maps to 0 or 13.
+export const FIB_SCALE = [0, 1, 2, 3, 5, 8, 13] as const;
+export type FibScore = (typeof FIB_SCALE)[number];
+
+export const FibScoreSchema = z.number().int().refine(
+  (n): n is FibScore => (FIB_SCALE as readonly number[]).includes(n),
+  { message: "score must be one of 0, 1, 2, 3, 5, 8, 13" }
+);
+
+// one scored dimension within a scorecard. `floor` is a hard failure
+// threshold — if score < floor, the run fails regardless of aggregate.
+export const DimensionScoreSchema = z.object({
+  name: z.string(),
+  score: FibScoreSchema,
+  max: z.number().int().positive(),
+  weight: z.number().positive().default(1),
+  floor: z.number().int().optional(),
+  rationale: z.string(),
+});
+export type DimensionScore = z.infer<typeof DimensionScoreSchema>;
+
+// a scorecard is the output of one strategy's score() call.
+// aggregate is a normalized 0..1 weighted mean across dimensions.
+export const ScorecardSchema = z.object({
+  strategy: z.string(),
+  dimensions: z.array(DimensionScoreSchema),
+  aggregate: z.number().min(0).max(1),
+  // color-tier only set by the color strategy. "red" | "yellow" | "green"
+  // surfaced at the scorecard level for lexicographic comparison.
+  color_tier: z.enum(["red", "yellow", "green"]).optional(),
+});
+export type Scorecard = z.infer<typeof ScorecardSchema>;
+
+export interface Violation {
+  strategy: string;
+  dimension: string;
+  score: number;
+  floor: number;
+  rationale: string;
+}
+
+// aggregate lint output across all configured strategies.
+export interface ScoringResult {
+  scorecards: Scorecard[];
+  weighted_aggregate: number;      // mean of per-strategy aggregates
+  color_tier: "red" | "yellow" | "green" | null;  // null if color not configured
+  floor_violations: Violation[];
+  passed: boolean;                 // floor_violations.length === 0
+}
+
+// --- strategies config shape ---
+//
+// persisted in config.json as a top-level `strategies:` block. each key
+// corresponds to a built-in strategy. omitted strategies are "off".
+//
+// rubric: free-form dimensions with LLM-assigned scores on fib scale.
+// invariants: MUST/SHOULD/MUST_NOT mapped to fib dims (MUST gets floor=13).
+// color: single-dim question answered red/yellow/green.
+
+export const RubricDimensionConfigSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  weight: z.number().positive().default(1),
+  max: z.number().int().positive().default(13),
+});
+export type RubricDimensionConfig = z.infer<typeof RubricDimensionConfigSchema>;
+
+export const RubricConfigSchema = z.object({
+  dimensions: z.array(RubricDimensionConfigSchema).min(1),
+});
+export type RubricConfig = z.infer<typeof RubricConfigSchema>;
+
+export const InvariantsConfigSchema = z.object({
+  MUST: z.array(z.string()).default([]),
+  SHOULD: z.array(z.string()).default([]),
+  MUST_NOT: z.array(z.string()).default([]),
+});
+export type InvariantsConfig = z.infer<typeof InvariantsConfigSchema>;
+
+export const ColorConfigSchema = z.object({
+  question: z.string().min(1),
+});
+export type ColorConfig = z.infer<typeof ColorConfigSchema>;
+
+export const StrategiesConfigSchema = z.object({
+  rubric: RubricConfigSchema.optional(),
+  invariants: InvariantsConfigSchema.optional(),
+  color: ColorConfigSchema.optional(),
+});
+export type StrategiesConfig = z.infer<typeof StrategiesConfigSchema>;
