@@ -1,7 +1,7 @@
 # #42 — Strategy-based scoring
 
 **Spec:** https://github.com/ahoward/joust/issues/42
-**Status:** in-progress (restart after branch base correction)
+**Status:** ready-for-review
 **Branch:** `strategy-scoring`
 
 ## Context
@@ -47,11 +47,15 @@ What needs real integration work (not transplant):
 - **[step 3+4]** `rubric` and `color` strategies. Commit: `11fd156`.
 - **[step 5]** `score_draft` + `compare_results` in lint.ts. Commit: `144fbbf`.
 - **[step 6]** strategy scoring in run.ts. Commit: `732111e`.
-- **[step 7]** init.ts bootstraps strategies. New `bootstrap_strategies(main, prompt, options?)` runs every registered strategy's `bootstrap()` in parallel with the workspace tools + log dir that main already has; errors in one strategy don't take down the others. Results populate `snowball.strategies` alongside the legacy `invariants` (both kept — lint still reads legacy; run prefers strategies via migrate_snowball). Seed snowball carries `best_draft` and empty `aggregate_history` from step 0. Init summary logs bootstrapped strategies including rubric dim list and color question. Transplanted test/init.test.ts (3 cases: all-decline, mixed results filter, error-resilience). `./dev/test` 142 pass. Commit: _pending_.
+- **[step 7]** init.ts bootstraps strategies. Commit: `2f5a4b0`.
+- **[step 8]** commands.ts + context.ts. `status` adds a strategies panel (rubric dim names, color question) + best aggregate + trajectory. `export` emits best_draft when available. `plan` scales its call/token/cost estimates by configured-strategy count. `context.ts::format_invariants` now prefers `snowball.strategies.invariants` with fallback to legacy top-level — jouster/polish/ask/specialist system prompts stay accurate whether loading a freshly bootstrapped run or a migrated legacy one. `./dev/test` 142 pass. Binary compiles. `./dev/post_flight` green. Commit: _pending_.
 
 ## Next
 
-**Step 8 — commands.ts status/export/plan show strategies.** `status` adds a strategies panel with per-strategy detail (invariants counts, rubric dims, color question), best aggregate + trajectory if present. `export` emits `best_draft` when available. `plan` scales its token estimate by configured-strategy count. Transplant/adapt from the old branch.
+Nothing. Phase 1 of #42 is implementation-complete on the corrected main. Remaining before close:
+1. **Review.** User reviews the branch. May request changes.
+2. **Integration.** Run `joust /draft "some prompt"` against a real agent panel to confirm end-to-end behavior (requires API keys). Cannot be automated from this session.
+3. **Promotion.** On close, promote what shipped into `spool/docs/strategies.md` (new file), append dated entries to `spool/agents/decisions.md`, archive this dir to `spool/gh/issue/archive/42-strategy-scoring/`. Per spool methodology.
 
 ## Deferred
 
