@@ -2,33 +2,53 @@ import { describe, test, expect } from "bun:test";
 import { _is_plateau, _migrate_snowball } from "../src/run.ts";
 import type { Snowball } from "../src/types.ts";
 
+// default values matching the prior hardcoded constants. now configurable
+// via JoustDefaults.plateau_epsilon / plateau_k (#49); these tests use the
+// historical defaults to preserve existing coverage. additional cases below
+// exercise non-default ε/k.
+const E = 0.02;
+const K = 2;
+
 describe("is_plateau", () => {
   test("too few points to decide", () => {
-    expect(_is_plateau([])).toBe(false);
-    expect(_is_plateau([0.5])).toBe(false);
-    expect(_is_plateau([0.5, 0.6])).toBe(false);
+    expect(_is_plateau([], E, K)).toBe(false);
+    expect(_is_plateau([0.5], E, K)).toBe(false);
+    expect(_is_plateau([0.5, 0.6], E, K)).toBe(false);
   });
 
   test("flat 3 = plateau (K=2)", () => {
-    expect(_is_plateau([0.5, 0.5, 0.5])).toBe(true);
+    expect(_is_plateau([0.5, 0.5, 0.5], E, K)).toBe(true);
   });
 
   test("still improving > epsilon breaks plateau", () => {
-    expect(_is_plateau([0.5, 0.6, 0.7])).toBe(false);
+    expect(_is_plateau([0.5, 0.6, 0.7], E, K)).toBe(false);
   });
 
   test("tiny improvement within epsilon counts as plateau", () => {
     // epsilon is 0.02 — a move of 0.01 across the window is plateau
-    expect(_is_plateau([0.8, 0.81, 0.81])).toBe(true);
+    expect(_is_plateau([0.8, 0.81, 0.81], E, K)).toBe(true);
   });
 
   test("regression counts as plateau (no improvement)", () => {
-    expect(_is_plateau([0.8, 0.7, 0.6])).toBe(true);
+    expect(_is_plateau([0.8, 0.7, 0.6], E, K)).toBe(true);
   });
 
   test("looks at the TAIL K+1, not the whole history", () => {
     // earlier improvement doesn't save a flat tail
-    expect(_is_plateau([0.1, 0.5, 0.9, 0.9, 0.9])).toBe(true);
+    expect(_is_plateau([0.1, 0.5, 0.9, 0.9, 0.9], E, K)).toBe(true);
+  });
+
+  test("custom epsilon: improvement of 0.05 is plateau when ε=0.1", () => {
+    expect(_is_plateau([0.6, 0.65, 0.65], 0.1, 2)).toBe(true);
+  });
+
+  test("custom epsilon: improvement of 0.05 breaks plateau when ε=0.01", () => {
+    expect(_is_plateau([0.6, 0.65, 0.65], 0.01, 2)).toBe(false);
+  });
+
+  test("custom k=3: needs 4 flat points", () => {
+    expect(_is_plateau([0.5, 0.5, 0.5], E, 3)).toBe(false);
+    expect(_is_plateau([0.5, 0.5, 0.5, 0.5], E, 3)).toBe(true);
   });
 });
 

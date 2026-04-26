@@ -13,6 +13,8 @@ const DEFAULT_DEFAULTS: JoustDefaults = {
   max_retries: 3,
   compaction_threshold: 10,
   max_rounds: 1,
+  plateau_epsilon: 0.02,
+  plateau_k: 2,
 };
 
 // default panel: two peer lead architects. same system prompt, different
@@ -364,6 +366,8 @@ export function generate_default_config(preset: Preset = "mixed"): string {
       max_retries: 3,
       compaction_threshold: 10,
       max_rounds: 1,
+      plateau_epsilon: 0.02,         // strategy-scoring: end-of-loop slack
+      plateau_k: 2,                  // strategy-scoring: rounds-flat threshold
       // workspace: ".",             // default: project dir. set to override
       // max_tool_steps: 10,         // cap tool-use round-trips per agent turn
     },

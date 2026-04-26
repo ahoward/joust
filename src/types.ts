@@ -101,6 +101,11 @@ export interface JoustDefaults {
   max_rounds: number;
   workspace?: string;
   max_tool_steps?: number;
+  // strategy-scoring plateau detection (#49). loop ends when the
+  // best_aggregate hasn't improved by > plateau_epsilon across the
+  // last (plateau_k + 1) rounds.
+  plateau_epsilon?: number;
+  plateau_k?: number;
 }
 
 export interface JoustConfig {

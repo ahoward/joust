@@ -61,17 +61,19 @@ function cleanup_tmp_files(dir: string): void {
 
 // --- strategy scoring helpers (phase 1 of #42) ---
 
-const PLATEAU_EPSILON = 0.02;
-const PLATEAU_K = 2;
+// fallback values when config doesn't supply them. real values come from
+// JoustDefaults.plateau_epsilon / plateau_k, plumbed in from resolve_config.
+const DEFAULT_PLATEAU_EPSILON = 0.02;
+const DEFAULT_PLATEAU_K = 2;
 
-// a plateau is K+1 consecutive aggregates with no improvement > epsilon.
+// a plateau is k+1 consecutive aggregates with no improvement > epsilon.
 // cheap to detect, no LLM calls.
-function is_plateau(history: number[]): boolean {
-  if (history.length < PLATEAU_K + 1) return false;
-  const recent = history.slice(-PLATEAU_K - 1);
+function is_plateau(history: number[], epsilon: number, k: number): boolean {
+  if (history.length < k + 1) return false;
+  const recent = history.slice(-k - 1);
   const peak = recent[0]!;
   for (let i = 1; i < recent.length; i++) {
-    if (recent[i]! - peak > PLATEAU_EPSILON) return false;
+    if (recent[i]! - peak > epsilon) return false;
   }
   return true;
 }
@@ -249,6 +251,8 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   let jousters = get_jousters(config);
   const max_retries = config.defaults.max_retries;
   const max_rounds = config.defaults.max_rounds;
+  const plateau_epsilon = config.defaults.plateau_epsilon ?? DEFAULT_PLATEAU_EPSILON;
+  const plateau_k = config.defaults.plateau_k ?? DEFAULT_PLATEAU_K;
   const interactive_interval = options.interactive ?? 0;
   let workspace_tools: ToolSet | undefined;
   let max_tool_steps: number | undefined;
@@ -786,9 +790,9 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
         snowball.best_scoring.weighted_aggregate,
       ];
       snowball = { ...snowball, aggregate_history: hist };
-      if (is_plateau(hist)) {
+      if (is_plateau(hist, plateau_epsilon, plateau_k)) {
         plateaued = true;
-        log(`\nplateau detected (${PLATEAU_K} rounds without improvement of > ${PLATEAU_EPSILON}), ending run`);
+        log(`\nplateau detected (${plateau_k} rounds without improvement of > ${plateau_epsilon}), ending run`);
       }
     }
 
