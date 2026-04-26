@@ -109,6 +109,10 @@ export interface JoustDefaults {
   // last (plateau_k + 1) rounds.
   plateau_epsilon?: number;
   plateau_k?: number;
+  // cheap-scorer override (#51). when set, strategy score() calls use
+  // this model id instead of main's. bootstrap stays on main. uses
+  // main's api_key (no separate key resolution).
+  scorer_model?: string;
 }
 
 export interface JoustConfig {

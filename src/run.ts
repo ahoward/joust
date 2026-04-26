@@ -10,6 +10,7 @@ import {
   get_jousters,
   is_specialist_name,
   build_specialist_agent,
+  build_scorer_agent,
   preset_peer_pick,
   detect_preset,
 } from "./config";
@@ -102,8 +103,12 @@ function migrate_snowball(snow: Snowball): Snowball {
 // score a candidate via the configured strategies. returns null on
 // failure (network/parse errors) so the caller can fall back to legacy
 // lint-only semantics.
+//
+// the `scorer` arg is the agent to run strategy score() calls against.
+// it's main when defaults.scorer_model is unset; otherwise a cloned
+// main with the model swapped (#51). we never use this for bootstrap.
 async function score_candidate(
-  main: AgentConfig,
+  scorer: AgentConfig,
   strategies: StrategiesConfig,
   snowball: Snowball,
   candidate_draft: string,
@@ -117,7 +122,7 @@ async function score_candidate(
   }
 ): Promise<ScoringResult | null> {
   const run = async () =>
-    score_draft(main, strategies, snowball, candidate_draft, {
+    score_draft(scorer, strategies, snowball, candidate_draft, {
       signal: options.signal,
       tools: options.tools,
       max_tool_steps: options.max_tool_steps,
@@ -125,12 +130,12 @@ async function score_candidate(
       log_label: options.log_label,
     });
   if (options.tank) {
-    return await tank_execute("main", run);
+    return await tank_execute(scorer.name, run);
   }
   try {
     return await run();
   } catch (err: any) {
-    log_status("main", `scoring error: ${err.message}`);
+    log_status(scorer.name, `scoring error: ${err.message}`);
     return null;
   }
 }
@@ -318,6 +323,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
   // re-read config at round boundary
   let config = resolve_config(dir);
   let main = get_main_agent(config);
+  let scorer = build_scorer_agent(main, config.defaults.scorer_model);
   let jousters = get_jousters(config);
   const max_retries = config.defaults.max_retries;
   const max_rounds = config.defaults.max_rounds;
@@ -330,6 +336,9 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
     workspace_tools = create_workspace_tools(config.defaults.workspace);
     max_tool_steps = config.defaults.max_tool_steps;
     log(`workspace: ${config.defaults.workspace} (agents have file access)`);
+  }
+  if (scorer !== main) {
+    log(`scorer: ${scorer.model} (cheap-scorer override; bootstrap stays on ${main.model})`);
   }
 
   try {
@@ -349,6 +358,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
     // re-read config at round boundary (supports mid-flight edits)
     config = resolve_config(dir);
     main = get_main_agent(config);
+    scorer = build_scorer_agent(main, config.defaults.scorer_model);
     jousters = get_jousters(config);
     if (config.defaults.workspace) {
       workspace_tools = create_workspace_tools(config.defaults.workspace);
@@ -457,7 +467,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           let scoring: ScoringResult | null = null;
           if (lint.valid && strategy_names.length > 0) {
             scoring = await score_candidate(
-              main,
+              scorer,
               strategies,
               snowball,
               mutation.draft,
@@ -788,7 +798,7 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
         let polish_scoring: ScoringResult | null = null;
         if (strategy_names.length > 0) {
           polish_scoring = await score_candidate(
-            main,
+            scorer,
             strategies,
             snowball,
             polish.draft,

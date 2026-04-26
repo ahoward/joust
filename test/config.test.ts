@@ -6,6 +6,7 @@ import {
   is_specialist_name,
   get_specialist,
   build_specialist_agent,
+  build_scorer_agent,
   generate_default_config,
   normalize_gemini_env,
   has_gemini_key,
@@ -264,5 +265,36 @@ describe("MutationResultSchema", () => {
       summon: { specialist: "security", ask: "" },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+
+describe("build_scorer_agent (#51)", () => {
+  const main = {
+    name: "main",
+    model: "claude-opus-4-6",
+    api_key: "$ANTHROPIC_API_KEY",
+    system: "lead architect",
+    temperature: 0.2,
+  } as const;
+
+  test("returns main unchanged when scorer_model is unset", () => {
+    expect(build_scorer_agent(main)).toBe(main);
+    expect(build_scorer_agent(main, undefined)).toBe(main);
+  });
+
+  test("returns main unchanged when scorer_model equals main.model", () => {
+    expect(build_scorer_agent(main, "claude-opus-4-6")).toBe(main);
+  });
+
+  test("returns a clone with model swapped when scorer_model differs", () => {
+    const scorer = build_scorer_agent(main, "claude-haiku-4-5");
+    expect(scorer.model).toBe("claude-haiku-4-5");
+    expect(scorer.api_key).toBe(main.api_key);
+    expect(scorer.system).toBe(main.system);
+    expect(scorer.temperature).toBe(main.temperature);
+    expect(scorer.name).toBe("main-scorer");
+    // does not mutate main
+    expect(main.model).toBe("claude-opus-4-6");
   });
 });
