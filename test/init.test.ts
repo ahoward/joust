@@ -32,17 +32,21 @@ function install_double<N extends "rubric" | "invariants" | "color">(
 }
 
 describe("bootstrap_strategies", () => {
-  test("returns {} when every strategy declines", async () => {
+  test("returns empty config + 3 declined when every strategy declines", async () => {
     _reset_strategies();
     install_double("invariants", null);
     install_double("rubric", null);
     install_double("color", null);
 
     const out = await _bootstrap_strategies(fake_agent, "a prompt");
-    expect(out).toEqual({});
+    expect(out.config).toEqual({});
+    expect(out.declined).toHaveLength(3);
+    for (const d of out.declined) {
+      expect(d.rationale).toContain("classifier returned null");
+    }
   });
 
-  test("returns only strategies that returned non-null", async () => {
+  test("returns only strategies that returned non-null; declined are tracked", async () => {
     _reset_strategies();
     install_double("invariants", {
       MUST: ["a"],
@@ -55,12 +59,13 @@ describe("bootstrap_strategies", () => {
     });
 
     const out = await _bootstrap_strategies(fake_agent, "spec + safety check");
-    expect(out.invariants).toEqual({ MUST: ["a"], SHOULD: [], MUST_NOT: [] });
-    expect(out.rubric).toBeUndefined();
-    expect(out.color).toEqual({ question: "is this safe?" });
+    expect(out.config.invariants).toEqual({ MUST: ["a"], SHOULD: [], MUST_NOT: [] });
+    expect(out.config.rubric).toBeUndefined();
+    expect(out.config.color).toEqual({ question: "is this safe?" });
+    expect(out.declined.map((d) => d.name)).toEqual(["rubric"]);
   });
 
-  test("errors in one strategy's bootstrap don't take down the others", async () => {
+  test("errors in one strategy's bootstrap surface as declined with the error message", async () => {
     _reset_strategies();
     register_strategy({
       name: "invariants",
@@ -73,7 +78,9 @@ describe("bootstrap_strategies", () => {
     install_double("color", null);
 
     const out = await _bootstrap_strategies(fake_agent, "prompt");
-    expect(out.invariants).toBeUndefined();
-    expect(out.rubric?.dimensions).toHaveLength(1);
+    expect(out.config.invariants).toBeUndefined();
+    expect(out.config.rubric?.dimensions).toHaveLength(1);
+    const inv = out.declined.find((d) => d.name === "invariants");
+    expect(inv?.rationale).toContain("simulated");
   });
 });

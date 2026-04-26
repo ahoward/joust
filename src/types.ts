@@ -28,6 +28,9 @@ export interface Snowball {
   best_draft?: string;
   best_scoring?: ScoringResult;
   aggregate_history?: number[];  // for plateau detection across rounds
+  // strategies that bootstrap() declined to apply (#50). captured at init
+  // so /status can show the operator which strategies opted out and why.
+  declined_strategies?: { name: string; rationale: string }[];
 }
 
 // --- history ---

@@ -135,6 +135,76 @@ async function score_candidate(
   }
 }
 
+// --- visibility helpers (#50) ---
+//
+// when polish scores below current best, emit a multi-line log block that
+// shows the per-strategy aggregate delta, color-tier change if any, and
+// the top-2 dim regressions. operator can see *why* the polish was
+// dropped without spelunking through history.
+function log_polish_regression(
+  prev: ScoringResult,
+  curr: ScoringResult
+): void {
+  const lines: string[] = [];
+  lines.push(
+    `[main] polish regressed: agg ${prev.weighted_aggregate.toFixed(3)} → ${curr.weighted_aggregate.toFixed(3)} (kept previous best)`
+  );
+
+  if (prev.color_tier !== curr.color_tier) {
+    lines.push(`  color: ${prev.color_tier ?? "(none)"} → ${curr.color_tier ?? "(none)"}`);
+  }
+
+  // per-strategy aggregate delta
+  const prev_by_name = new Map(prev.scorecards.map((c) => [c.strategy, c]));
+  for (const cur of curr.scorecards) {
+    const p = prev_by_name.get(cur.strategy);
+    if (!p) continue;
+    if (Math.abs(cur.aggregate - p.aggregate) < 0.001) continue;
+    lines.push(
+      `  ${cur.strategy}: ${p.aggregate.toFixed(3)} → ${cur.aggregate.toFixed(3)}`
+    );
+  }
+
+  // top-2 individual dim regressions across all strategies
+  type Drop = { strategy: string; dim: string; before: number; after: number; rationale: string };
+  const drops: Drop[] = [];
+  for (const cur of curr.scorecards) {
+    const p = prev_by_name.get(cur.strategy);
+    if (!p) continue;
+    const p_dims = new Map(p.dimensions.map((d) => [d.name, d]));
+    for (const d of cur.dimensions) {
+      const pd = p_dims.get(d.name);
+      if (!pd) continue;
+      if (d.score < pd.score) {
+        drops.push({
+          strategy: cur.strategy,
+          dim: d.name,
+          before: pd.score,
+          after: d.score,
+          rationale: d.rationale,
+        });
+      }
+    }
+  }
+  drops.sort((a, b) => b.before - b.after - (a.before - a.after));
+  for (const d of drops.slice(0, 2)) {
+    lines.push(`  - ${d.strategy}/${d.dim}: ${d.before} → ${d.after} (${d.rationale.slice(0, 100)})`);
+  }
+
+  for (const l of lines) log(l);
+}
+
+// summon carryover log point — placeholder for #52. wired now so the
+// downstream issue can fill in real state without a second touchup of
+// this code path.
+function log_summon_carryover(round: number, snowball: Snowball): void {
+  const pending = (snowball as any).pending_summon;
+  if (!pending) return;
+  log(
+    `[round ${round}] carrying over: ${pending.specialist} specialist asked "${(pending.ask ?? "").slice(0, 80)}", prior attempt rejected for: ${(pending.last_rejection ?? "(no rejection captured)").slice(0, 100)}`
+  );
+}
+
 // --- options ---
 
 export interface RunOptions {
@@ -769,6 +839,9 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
           const score_label = `agg=${polish_scoring.weighted_aggregate.toFixed(3)}${polish_scoring.color_tier ? ` tier=${polish_scoring.color_tier}` : ""}`;
           if (polish_is_best) {
             log_status("main", `polish complete (${score_label}, new best)`);
+          } else if (snowball.best_scoring) {
+            // emit a richer regression block instead of the bare one-liner
+            log_polish_regression(snowball.best_scoring, polish_scoring);
           } else {
             log_status("main", `polish complete (${score_label}, kept previous best)`);
           }

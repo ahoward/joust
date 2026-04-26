@@ -50,6 +50,15 @@ export function status(dir: string): void {
       log(`  color:      ${strategies.color.question}`);
     }
   }
+  // declined strategies — captured at init, surfaced here so operators
+  // can see WHICH strategies opted out and why (#50).
+  const declined = snowball.declined_strategies ?? [];
+  if (declined.length > 0) {
+    log(`declined:   ${declined.map((d) => d.name).join(", ")}`);
+    for (const d of declined) {
+      log(`  ${d.name}: ${d.rationale.slice(0, 200)}`);
+    }
+  }
   const best = snowball.best_scoring;
   if (best) {
     log(`best:       aggregate=${best.weighted_aggregate.toFixed(3)}${best.color_tier ? ` tier=${best.color_tier}` : ""}`);
