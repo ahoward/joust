@@ -201,10 +201,20 @@ export function plan(dir: string): void {
   const total_input_tokens = total_calls * tokens_per_call;
   const total_output_tokens = Math.ceil(total_input_tokens * 0.5);
 
+  // when scorer_model is configured, scoring calls go to the cheaper model;
+  // bootstrap + lint + polish stay on main. count them separately.
+  const scorer_model_id = config.defaults.scorer_model;
+  const scorer_overridden = !!scorer_model_id && scorer_model_id !== main.model;
+  const scorer_label = scorer_overridden ? scorer_model_id! : main.model;
+
   log(`=== joust plan ===`);
   log(`agents: main (${main.model}) + ${jousters.length} jousters`);
   for (const j of jousters) {
     log(`  - ${j.name} (${j.model})`);
+  }
+  if (scorer_overridden) {
+    log(`scorer: ${scorer_label} (cheap-scorer override; bootstrap stays on ${main.model})`);
+    log(`  note: cheaper scoring is also noisier — unset scorer_model for the final pre-publication run.`);
   }
   log(`strategies: ${strategy_count} (${Object.keys(latest?.snowball.strategies ?? {}).join(", ") || "(legacy/none)"})`);
   log(`rounds: ${max_rounds} | retries: ${max_retries}/agent`);
@@ -213,15 +223,32 @@ export function plan(dir: string): void {
   log(`tokens: ~${Math.round(total_input_tokens / 1000)}K input, ~${Math.round(total_output_tokens / 1000)}K output`);
   log(``);
 
-  // cost breakdown by model — main does lint + scoring passes + polish
+  // cost breakdown by model. main does lint + polish; scorer (= main when
+  // scorer_model unset) handles strategy scoring calls.
   const model_usage: Record<string, { input: number; output: number }> = {};
-  const main_calls =
-    (jousters.length * (1 + strategy_count) + 1 + strategy_count) * max_rounds;
+  // main: 1 lint per jouster mutation + 1 lint per polish + 1 polish call = (jousters + 2) per round
+  const main_lint_polish_calls = (jousters.length + 2) * max_rounds;
+  // scorer: strategy_count score calls per jouster + strategy_count per polish
+  const scorer_calls = (jousters.length + 1) * strategy_count * max_rounds;
+
   const main_key = main.model;
   model_usage[main_key] = {
-    input: (model_usage[main_key]?.input ?? 0) + main_calls * tokens_per_call,
-    output: (model_usage[main_key]?.output ?? 0) + main_calls * Math.ceil(tokens_per_call * 0.3),
+    input: (model_usage[main_key]?.input ?? 0) + main_lint_polish_calls * tokens_per_call,
+    output: (model_usage[main_key]?.output ?? 0) + main_lint_polish_calls * Math.ceil(tokens_per_call * 0.3),
   };
+  // scorer is either same model as main (merge) or a separate row.
+  const scorer_key = scorer_label;
+  if (scorer_key === main_key) {
+    model_usage[main_key] = {
+      input: (model_usage[main_key]?.input ?? 0) + scorer_calls * tokens_per_call,
+      output: (model_usage[main_key]?.output ?? 0) + scorer_calls * Math.ceil(tokens_per_call * 0.3),
+    };
+  } else {
+    model_usage[scorer_key] = {
+      input: (model_usage[scorer_key]?.input ?? 0) + scorer_calls * tokens_per_call,
+      output: (model_usage[scorer_key]?.output ?? 0) + scorer_calls * Math.ceil(tokens_per_call * 0.3),
+    };
+  }
   for (const j of jousters) {
     const key = j.model;
     const j_calls = max_rounds; // 1 mutation per round

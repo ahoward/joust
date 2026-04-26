@@ -144,6 +144,25 @@ export function get_jousters(config: JoustConfig): AgentConfig[] {
   return Object.values(config.agents).filter((a) => a.name !== "main");
 }
 
+// --- scorer agent (#51) ---
+//
+// when defaults.scorer_model is set, strategy score() calls use a
+// cloned main agent with the model field overridden. bootstrap stays
+// on real main. api_key, system, temperature inherit from main —
+// scorer_model is a model-id swap only.
+//
+// returns main unchanged when scorer_model is null/unset, so callers
+// can blindly thread `build_scorer_agent(main, cfg.scorer_model)` and
+// get the right behavior either way.
+export function build_scorer_agent(main: AgentConfig, scorer_model?: string): AgentConfig {
+  if (!scorer_model || scorer_model === main.model) return main;
+  return {
+    ...main,
+    name: `${main.name}-scorer`,
+    model: scorer_model,
+  };
+}
+
 // --- generate default rfc.yaml content ---
 
 // --- presets ---
@@ -370,6 +389,7 @@ export function generate_default_config(preset: Preset = "mixed"): string {
       plateau_k: 2,                  // strategy-scoring: rounds-flat threshold
       // workspace: ".",             // default: project dir. set to override
       // max_tool_steps: 10,         // cap tool-use round-trips per agent turn
+      // scorer_model: "claude-haiku-4-5",  // cheaper model for strategy scoring
     },
     agents: {
       main: {
