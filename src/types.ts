@@ -31,6 +31,17 @@ export interface Snowball {
   // strategies that bootstrap() declined to apply (#50). captured at init
   // so /status can show the operator which strategies opted out and why.
   declined_strategies?: { name: string; rationale: string }[];
+  // a specialist summoned by a peer/main whose mutation was rejected
+  // (lint or floor or no-improvement). carries across rounds so the
+  // specialist gets a second attempt with the rejection feedback (#52).
+  // cleared on accept or after attempts >= max_retries.
+  pending_summon?: {
+    specialist: string;
+    ask: string;
+    summoned_by: string;
+    attempts: number;
+    last_rejection?: string;
+  };
 }
 
 // --- history ---

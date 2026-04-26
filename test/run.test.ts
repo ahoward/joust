@@ -96,6 +96,24 @@ describe("migrate_snowball", () => {
     expect(out.best_draft).toBe("hello");
   });
 
+  test("preserves pending_summon when migrating an already-migrated snowball (#52)", () => {
+    const migrated: Snowball = {
+      ...base,
+      strategies: { invariants: { MUST: ["x"], SHOULD: [], MUST_NOT: [] } },
+      best_draft: "hello",
+      aggregate_history: [0.5],
+      pending_summon: {
+        specialist: "legal",
+        ask: "review terms",
+        summoned_by: "peer",
+        attempts: 1,
+        last_rejection: "missed jurisdiction clause",
+      },
+    };
+    expect(_migrate_snowball(migrated)).toBe(migrated);
+    expect(_migrate_snowball(migrated).pending_summon?.specialist).toBe("legal");
+  });
+
   test("round-trips a realistic legacy history entry", () => {
     // simulate reading an old history JSON that predates strategies
     const legacy_raw = {

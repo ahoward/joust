@@ -199,15 +199,209 @@ function log_polish_regression(
   for (const l of lines) log(l);
 }
 
-// summon carryover log point — placeholder for #52. wired now so the
-// downstream issue can fill in real state without a second touchup of
-// this code path.
+// summon carryover log point — wired in #52. fires at round start when
+// the previous round left a pending_summon set.
 function log_summon_carryover(round: number, snowball: Snowball): void {
-  const pending = (snowball as any).pending_summon;
+  const pending = snowball.pending_summon;
   if (!pending) return;
   log(
-    `[round ${round}] carrying over: ${pending.specialist} specialist asked "${(pending.ask ?? "").slice(0, 80)}", prior attempt rejected for: ${(pending.last_rejection ?? "(no rejection captured)").slice(0, 100)}`
+    `[round ${round}] carrying over: ${pending.specialist} specialist asked "${(pending.ask ?? "").slice(0, 80)}", prior attempt (#${pending.attempts}) rejected for: ${(pending.last_rejection ?? "(no rejection captured)").slice(0, 120)}`
   );
+}
+
+// outcome of a single specialist invocation (#52).
+type SpecialistOutcome =
+  | { kind: "accepted"; snowball: Snowball; nextStep: number }
+  | { kind: "rejected"; snowball: Snowball; nextStep: number; reason: string }
+  | { kind: "errored"; snowball: Snowball; nextStep: number; reason: string };
+
+interface SpecialistContext {
+  config: import("./config").JoustConfig;
+  peer_pick: { model: string; api_key: string };
+  main: AgentConfig;
+  scorer: AgentConfig;
+  strategies: StrategiesConfig;
+  strategy_names: string[];
+  dir: string;
+  round: number;
+  workspace_tools?: ToolSet;
+  max_tool_steps?: number;
+  abort_controller: AbortController;
+  tank?: boolean;
+  signal_received_ref: { value: boolean };
+}
+
+// invoke a specialist once. shared between (a) the initial summon path
+// inside a jouster's turn and (b) round-start carryover from a prior
+// rejected summon. returns a structured outcome the caller maps to
+// snowball.pending_summon updates.
+async function invoke_specialist(
+  specialist_name: string,
+  ask: string,
+  summoned_by: string,
+  attempts: number,
+  last_rejection: string | undefined,
+  snowball: Snowball,
+  step: number,
+  ctx: SpecialistContext
+): Promise<SpecialistOutcome> {
+  const spec_label = `[${specialist_name}]`;
+  const attempt_label = attempts > 1 ? ` (attempt ${attempts})` : "";
+
+  try {
+    const specialist_agent = build_specialist_agent(
+      specialist_name as any,
+      ask,
+      ctx.config,
+      ctx.peer_pick as any
+    );
+
+    const spec_messages = compile_context(
+      specialist_agent,
+      snowball,
+      "specialist",
+      { has_tools: !!ctx.workspace_tools }
+    );
+
+    if (last_rejection) {
+      spec_messages.push({
+        role: "user",
+        content: [
+          "YOUR PREVIOUS ATTEMPT WAS REJECTED for the following:",
+          last_rejection,
+          "",
+          "Rewrite your mutation to fix this.",
+        ].join("\n"),
+      });
+    }
+
+    const spec_mutation = await call_agent_structured(
+      specialist_agent,
+      spec_messages,
+      MutationResultSchema,
+      {
+        signal: ctx.abort_controller.signal,
+        tools: ctx.workspace_tools,
+        max_tool_steps: ctx.max_tool_steps,
+        log_dir: join(ctx.dir, "logs"),
+        log_label: `round ${ctx.round} step ${step} summoned by ${summoned_by} — ask: ${ask.slice(0, 120)}${attempt_label}`,
+      }
+    );
+
+    // gate 1: legacy invariants lint
+    const spec_lint = await lint_mutation(ctx.main, snowball, spec_mutation.draft, {
+      tools: ctx.workspace_tools,
+      max_tool_steps: ctx.max_tool_steps,
+      log_dir: join(ctx.dir, "logs"),
+      log_label: `round ${ctx.round} step ${step} lint (specialist ${specialist_name})${attempt_label}`,
+    });
+
+    if (!spec_lint.valid) {
+      const reason = spec_lint.violations.join("; ");
+      const spec_entry: HistoryEntry = {
+        step,
+        actor: specialist_name,
+        action: `summoned_by_${summoned_by}`,
+        status: "rejected",
+        timestamp: new Date().toISOString(),
+        snowball: { ...snowball, draft: spec_mutation.draft },
+        violations: spec_lint.violations,
+      };
+      commit_state(ctx.dir, step, specialist_name, spec_entry);
+      log_warn(`${spec_label} rejected${attempt_label} — violations: ${reason}`);
+      return { kind: "rejected", snowball, nextStep: step + 1, reason };
+    }
+
+    // gate 2: strategy scoring (#52). only when strategies are configured.
+    let scoring: ScoringResult | null = null;
+    if (ctx.strategy_names.length > 0) {
+      scoring = await score_candidate(
+        ctx.scorer,
+        ctx.strategies,
+        snowball,
+        spec_mutation.draft,
+        {
+          signal: ctx.abort_controller.signal,
+          tools: ctx.workspace_tools,
+          max_tool_steps: ctx.max_tool_steps,
+          log_dir: join(ctx.dir, "logs"),
+          log_label: `round ${ctx.round} step ${step} score (specialist ${specialist_name})${attempt_label}`,
+          tank: ctx.tank,
+        }
+      );
+    }
+
+    // floor violation OR no-improvement vs best → reject
+    let strategy_rejection: string | null = null;
+    if (scoring) {
+      if (!scoring.passed) {
+        strategy_rejection = scoring.floor_violations
+          .map((v) => `${v.strategy}/${v.dimension}: ${v.rationale}`)
+          .join("; ");
+      } else if (snowball.best_scoring && compare_results(scoring, snowball.best_scoring) < 0) {
+        strategy_rejection =
+          `no improvement vs best (agg=${scoring.weighted_aggregate.toFixed(3)} vs best=${snowball.best_scoring.weighted_aggregate.toFixed(3)}` +
+          `${scoring.color_tier ? ` tier=${scoring.color_tier}` : ""})`;
+      }
+    }
+
+    if (strategy_rejection) {
+      const spec_entry: HistoryEntry = {
+        step,
+        actor: specialist_name,
+        action: `summoned_by_${summoned_by}`,
+        status: "rejected",
+        timestamp: new Date().toISOString(),
+        snowball: { ...snowball, draft: spec_mutation.draft },
+        violations: [strategy_rejection],
+      };
+      commit_state(ctx.dir, step, specialist_name, spec_entry);
+      log_warn(`${spec_label} rejected${attempt_label} — ${strategy_rejection}`);
+      return { kind: "rejected", snowball, nextStep: step + 1, reason: strategy_rejection };
+    }
+
+    // accepted — commit, possibly promote to best.
+    const spec_critique: CritiqueEntry = {
+      actor: specialist_name,
+      action: `summoned_by_${summoned_by}`,
+      notes: `ask: ${ask}\n\n${spec_mutation.critique}`,
+      timestamp: new Date().toISOString(),
+    };
+    const new_snowball: Snowball = {
+      ...snowball,
+      draft: spec_mutation.draft,
+      critique_trail: [...snowball.critique_trail, spec_critique],
+      best_draft: scoring ? spec_mutation.draft : snowball.best_draft,
+      best_scoring: scoring ?? snowball.best_scoring,
+    };
+    const spec_entry: HistoryEntry = {
+      step,
+      actor: specialist_name,
+      action: `summoned_by_${summoned_by}`,
+      status: "accepted",
+      timestamp: new Date().toISOString(),
+      snowball: new_snowball,
+    };
+    commit_state(ctx.dir, step, specialist_name, spec_entry);
+    const score_label = scoring
+      ? ` agg=${scoring.weighted_aggregate.toFixed(3)}${scoring.color_tier ? ` tier=${scoring.color_tier}` : ""}`
+      : "";
+    log_success(`${spec_label} accepted${attempt_label}${score_label} (summoned by ${summoned_by})`);
+    return { kind: "accepted", snowball: new_snowball, nextStep: step + 1 };
+  } catch (err: any) {
+    if (err.name === "AbortError" || ctx.signal_received_ref.value) {
+      log_status(specialist_name, "aborted");
+      return { kind: "errored", snowball, nextStep: step, reason: "aborted" };
+    }
+    const err_detail = err.message || err.cause?.message || String(err);
+    log_error(`${spec_label} summon error: ${err_detail}`);
+    append_log(
+      ctx.dir,
+      "execution.log",
+      `\n--- ${new Date().toISOString()} ---\n${specialist_name} summon error: ${err_detail}\n`
+    );
+    return { kind: "errored", snowball, nextStep: step, reason: err_detail };
+  }
 }
 
 // --- options ---
@@ -372,12 +566,82 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
 
     // cap: one summon per round across all peers. prevents specialist cascades
     // and keeps runs predictable. either peer can summon; first-write-wins.
+    // carryovers from #52 do NOT count against this cap — they are re-runs
+    // of an already-counted summon.
     const MAX_SUMMONS_PER_ROUND = 1;
     let summons_this_round = 0;
 
     // peer_pick: the "second company" model, used as the default provider for
     // ad-hoc summoned specialists that aren't pinned in rfc.yaml.
     const peer_pick = preset_peer_pick(detect_preset());
+
+    // SpecialistContext snapshot for invoke_specialist calls this round.
+    const signal_received_ref = { value: false };
+    const spec_ctx: SpecialistContext = {
+      config,
+      peer_pick,
+      main,
+      scorer,
+      strategies,
+      strategy_names,
+      dir,
+      round,
+      workspace_tools,
+      max_tool_steps,
+      abort_controller,
+      tank: options.tank,
+      signal_received_ref,
+    };
+
+    // pending_summon carryover (#52). if a previous round left a specialist
+    // mid-attempt, run it before any jouster. attempts cap mirrors max_retries.
+    if (snowball.pending_summon && !signal_received) {
+      const pending = snowball.pending_summon;
+      signal_received_ref.value = signal_received;
+      if (pending.attempts >= max_retries) {
+        log_warn(
+          `[${pending.specialist}] exhausted ${max_retries} attempts; clearing pending_summon and continuing run`
+        );
+        const marker_path = join(dir, ".needs-attention");
+        const marker = `${pending.specialist} exhausted ${max_retries} attempts at round ${round}.\n` +
+          `Original ask: ${pending.ask}\n` +
+          `Last rejection: ${pending.last_rejection ?? "(none captured)"}\n` +
+          `Timestamp: ${new Date().toISOString()}\n`;
+        try { writeFileSync(marker_path, marker); } catch {}
+        snowball = { ...snowball, pending_summon: undefined };
+      } else {
+        log_summon_carryover(round, snowball);
+        const next_attempts = pending.attempts + 1;
+        const outcome = await invoke_specialist(
+          pending.specialist,
+          pending.ask,
+          pending.summoned_by,
+          next_attempts,
+          pending.last_rejection,
+          snowball,
+          step,
+          spec_ctx
+        );
+        snowball = outcome.snowball;
+        step = outcome.nextStep;
+        if (outcome.kind === "accepted") {
+          snowball = { ...snowball, pending_summon: undefined };
+        } else if (outcome.kind === "rejected") {
+          snowball = {
+            ...snowball,
+            pending_summon: {
+              specialist: pending.specialist,
+              ask: pending.ask,
+              summoned_by: pending.summoned_by,
+              attempts: next_attempts,
+              last_rejection: outcome.reason,
+            },
+          };
+        }
+        // errored: leave pending_summon untouched (counts as "no attempt made"),
+        // unless the error was abort, in which case run.ts will exit anyway.
+      }
+    }
 
     for (const jouster of jousters) {
       // check signal before each agent
@@ -540,106 +804,57 @@ export async function run(dir: string, options: RunOptions = {}): Promise<void> 
 
             // --- summon a specialist if requested ---
             // only non-specialist agents (main/peer) can summon; specialists
-            // cannot recursively summon other specialists. one summon per round.
+            // cannot recursively summon other specialists. one summon per
+            // round (carryovers don't count). first attempts always run
+            // through invoke_specialist so retry feedback flows through the
+            // same path as round-start carryover.
             if (
               mutation.summon &&
               !is_specialist_name(jouster.name) &&
               summons_this_round < MAX_SUMMONS_PER_ROUND &&
+              !snowball.pending_summon &&
               !signal_received
             ) {
               const specialist_name = mutation.summon.specialist;
               const ask = mutation.summon.ask;
               summons_this_round++;
+              signal_received_ref.value = signal_received;
 
               log_status(jouster.name, `summoning ${specialist_name}: ${ask.slice(0, 120)}`);
 
-              try {
-                const specialist_agent = build_specialist_agent(
-                  specialist_name,
-                  ask,
-                  config,
-                  peer_pick
-                );
-
-                const spec_messages = compile_context(
-                  specialist_agent,
-                  snowball,
-                  "specialist",
-                  { has_tools: !!workspace_tools }
-                );
-
-                const spec_mutation = await call_agent_structured(
-                  specialist_agent,
-                  spec_messages,
-                  MutationResultSchema,
-                  {
-                    signal: abort_controller.signal,
-                    tools: workspace_tools,
-                    max_tool_steps,
-                    log_dir: join(dir, "logs"),
-                    log_label: `round ${round} step ${step} summoned by ${jouster.name} — ask: ${ask.slice(0, 120)}`,
-                  }
-                );
-
-                const spec_lint = await lint_mutation(main, snowball, spec_mutation.draft, {
-                  tools: workspace_tools,
-                  max_tool_steps,
-                  log_dir: join(dir, "logs"),
-                  log_label: `round ${round} step ${step} lint (specialist ${specialist_name})`,
-                });
-
-                if (spec_lint.valid) {
-                  const spec_critique: CritiqueEntry = {
-                    actor: specialist_name,
-                    action: `summoned_by_${jouster.name}`,
-                    notes: `ask: ${ask}\n\n${spec_mutation.critique}`,
-                    timestamp: new Date().toISOString(),
-                  };
-
-                  snowball = {
-                    ...snowball,
-                    draft: spec_mutation.draft,
-                    critique_trail: [...snowball.critique_trail, spec_critique],
-                  };
-
-                  const spec_entry: HistoryEntry = {
-                    step,
-                    actor: specialist_name,
-                    action: `summoned_by_${jouster.name}`,
-                    status: "accepted",
-                    timestamp: new Date().toISOString(),
-                    snowball,
-                  };
-                  commit_state(dir, step, specialist_name, spec_entry);
-                  step++;
-                  log_success(`[${specialist_name}] accepted (summoned by ${jouster.name})`);
-                } else {
-                  const spec_entry: HistoryEntry = {
-                    step,
-                    actor: specialist_name,
-                    action: `summoned_by_${jouster.name}`,
-                    status: "rejected",
-                    timestamp: new Date().toISOString(),
-                    snowball: { ...snowball, draft: spec_mutation.draft },
-                    violations: spec_lint.violations,
-                  };
-                  commit_state(dir, step, specialist_name, spec_entry);
-                  step++;
-                  log_warn(`[${specialist_name}] rejected — violations: ${spec_lint.violations.join("; ")}`);
-                }
-              } catch (err: any) {
-                if (err.name === "AbortError" || signal_received) {
-                  log_status(specialist_name, "aborted");
-                } else {
-                  const err_detail = err.message || err.cause?.message || String(err);
-                  log_error(`[${specialist_name}] summon error: ${err_detail}`);
-                  append_log(
-                    dir,
-                    "execution.log",
-                    `\n--- ${new Date().toISOString()} ---\n${specialist_name} summon error: ${err_detail}\n`
-                  );
-                }
+              const outcome = await invoke_specialist(
+                specialist_name,
+                ask,
+                jouster.name,
+                1,
+                undefined,
+                snowball,
+                step,
+                spec_ctx
+              );
+              snowball = outcome.snowball;
+              step = outcome.nextStep;
+              if (outcome.kind === "rejected") {
+                snowball = {
+                  ...snowball,
+                  pending_summon: {
+                    specialist: specialist_name,
+                    ask,
+                    summoned_by: jouster.name,
+                    attempts: 1,
+                    last_rejection: outcome.reason,
+                  },
+                };
               }
+              // accepted / errored: pending_summon stays unset.
+            } else if (
+              mutation.summon &&
+              !is_specialist_name(jouster.name) &&
+              snowball.pending_summon
+            ) {
+              log_warn(
+                `[${jouster.name}] summon for ${mutation.summon.specialist} deferred (a previous summon for ${snowball.pending_summon.specialist} is still pending)`
+              );
             } else if (
               mutation.summon &&
               !is_specialist_name(jouster.name) &&
