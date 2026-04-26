@@ -86,6 +86,10 @@ export const SnowballSchema = z.object({
   best_draft: z.string().optional(),
   best_scoring: z.any().optional(),
   aggregate_history: z.array(z.number()).optional(),
+  // visibility (#50) + specialist carryover (#52). loosely validated;
+  // run.ts is the source of truth for the shape.
+  declined_strategies: z.any().optional(),
+  pending_summon: z.any().optional(),
 });
 
 export const HistoryEntrySchema = z.object({
