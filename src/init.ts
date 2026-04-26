@@ -35,6 +35,11 @@ import {
 // runs each registered strategy's bootstrap() against the prompt. a
 // strategy that returns null is omitted from the final config. errors
 // in one strategy don't kill the others (per-strategy try/catch).
+// returns the bootstrapped strategies config + a list of strategies that
+// declined to apply (with the best rationale we can capture). #50 wired
+// the declined list into snowball.declined_strategies so /status surfaces
+// it. strategies don't currently return a structured rationale on decline,
+// so the rationale is a placeholder until a richer interface lands.
 async function bootstrap_strategies(
   main: AgentConfig,
   prompt: string,
@@ -44,12 +49,16 @@ async function bootstrap_strategies(
     log_dir?: string;
     signal?: AbortSignal;
   }
-): Promise<StrategiesConfig> {
+): Promise<{
+  config: StrategiesConfig;
+  declined: { name: string; rationale: string }[];
+}> {
   const names = list_strategies();
   log_status("main", `bootstrapping strategies: ${names.join(", ")}`);
 
-  const pairs = await Promise.all(
-    names.map(async (name) => {
+  type Result = readonly [string, unknown, "applied" | "declined" | "errored", string];
+  const pairs: Result[] = await Promise.all(
+    names.map(async (name): Promise<Result> => {
       const s = get_strategy(name as StrategyName);
       try {
         const cfg = await s.bootstrap({
@@ -60,22 +69,29 @@ async function bootstrap_strategies(
           log_dir: options?.log_dir,
           signal: options?.signal,
         });
-        return [name, cfg] as const;
+        if (cfg) return [name, cfg, "applied", ""] as const;
+        return [name, null, "declined", "classifier returned null (strategy judged not applicable)"] as const;
       } catch (err: any) {
         log_status(name, `bootstrap error: ${err.message}`);
-        return [name, null] as const;
+        return [name, null, "errored", `bootstrap error: ${err.message}`] as const;
       }
     })
   );
 
   const out: StrategiesConfig = {};
-  for (const [name, cfg] of pairs) {
-    if (!cfg) continue;
-    if (name === "invariants") out.invariants = cfg as any;
-    else if (name === "rubric") out.rubric = cfg as any;
-    else if (name === "color") out.color = cfg as any;
+  const declined: { name: string; rationale: string }[] = [];
+  for (const [name, cfg, status, rationale] of pairs) {
+    if (status === "applied" && cfg) {
+      if (name === "invariants") out.invariants = cfg as any;
+      else if (name === "rubric") out.rubric = cfg as any;
+      else if (name === "color") out.color = cfg as any;
+    } else {
+      // both declined and errored go into the declined list with their rationale
+      declined.push({ name, rationale });
+      log_status(name, `declined — ${rationale}`);
+    }
   }
-  return out;
+  return { config: out, declined };
 }
 
 // --- read prompt from $EDITOR ---
@@ -178,7 +194,7 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
 
   // strategy bootstrap (phase 1 of #42) — ask each registered strategy
   // whether it applies to this prompt and collect the config blocks.
-  const strategies = await bootstrap_strategies(main, prompt, {
+  const { config: strategies, declined } = await bootstrap_strategies(main, prompt, {
     tools: workspace_tools,
     max_tool_steps,
     log_dir: join(dir, "logs"),
@@ -197,6 +213,7 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
     strategies,
     best_draft: result.draft,
     aggregate_history: [],
+    declined_strategies: declined.length > 0 ? declined : undefined,
   };
 
   // write config snapshot — auto-detect preset from env if not specified
