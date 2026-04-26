@@ -6,6 +6,7 @@ import { call_agent } from "./ai";
 import { resolve_config, get_main_agent, get_jousters } from "./config";
 import { create_workspace_tools } from "./tools";
 import { JoustUserError } from "./errors";
+import { sparkline } from "./sparkline";
 import type { HistoryEntry } from "./types";
 
 // --- joust status ---
@@ -67,6 +68,10 @@ export function status(dir: string): void {
   if (history.length > 0) {
     const trajectory = history.map((n: number) => n.toFixed(2)).join(" → ");
     log(`trajectory: ${trajectory}`);
+    // sparkline below the numeric trajectory (#53)
+    if (history.length > 1) {
+      log(`            ${sparkline(history)}`);
+    }
   }
 
   log(`draft:      ${word_count} words, ${draft_for_count.length} chars`);
@@ -152,6 +157,45 @@ export function diff(dir: string, step1?: string, step2?: string): void {
     } else if (a !== b) {
       log(`-${i + 1}: ${a}`);
       log(`+${i + 1}: ${b}`);
+    }
+  }
+
+  // per-dim score deltas (#53). only emit when both entries have scoring;
+  // legacy / pre-strategy entries fall through to text-only diff.
+  const sa = entry_a.snowball.best_scoring;
+  const sb = entry_b.snowball.best_scoring;
+  if (sa && sb) {
+    log("");
+    log("=== scores ===");
+    if (sa.color_tier !== sb.color_tier) {
+      log(`color_tier: ${sa.color_tier ?? "(none)"} → ${sb.color_tier ?? "(none)"}`);
+    }
+    log(
+      `aggregate:  ${sa.weighted_aggregate.toFixed(3)} → ${sb.weighted_aggregate.toFixed(3)}`
+    );
+    const a_by_strategy = new Map(sa.scorecards.map((c: any) => [c.strategy, c]));
+    for (const cb of sb.scorecards) {
+      const ca = a_by_strategy.get(cb.strategy);
+      if (!ca) {
+        log(`strategy: ${cb.strategy} (new in step ${entry_b.step})`);
+        continue;
+      }
+      log("");
+      log(`strategy: ${cb.strategy}`);
+      const a_dims = new Map(ca.dimensions.map((d: any) => [d.name, d]));
+      for (const db of cb.dimensions) {
+        const da = a_dims.get(db.name);
+        if (!da) {
+          log(`  ${db.name}: (new) → ${db.score}`);
+          continue;
+        }
+        if (da.score === db.score) continue;
+        const arrow = db.score > da.score ? "↑" : "↓";
+        log(`  ${db.name}: ${da.score} → ${db.score} ${arrow}`);
+      }
+      const agg_a = ca.aggregate;
+      const agg_b = cb.aggregate;
+      log(`  aggregate: ${agg_a.toFixed(3)} → ${agg_b.toFixed(3)}`);
     }
   }
 }
