@@ -24,9 +24,11 @@ jobs:
           - os: macos-latest
             target: darwin-arm64
             asset: joust-darwin-arm64
-          - os: macos-13
-            target: darwin-x64
-            asset: joust-darwin-x64
+          # darwin-x64 (Intel macOS) is intentionally not in the build matrix.
+          # GH Actions' macos-13 runner pool was severely queue-starved on
+          # 2026-05-03; first attempt sat 50+ min waiting. Apple Silicon is
+          # mandatory; Intel macOS users can install from source or use Rosetta
+          # against the darwin-arm64 binary.
     steps:
       - name: checkout
         uses: actions/checkout@v4
