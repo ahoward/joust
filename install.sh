@@ -26,10 +26,15 @@ ARCH="$(uname -m)"
 case "$OS-$ARCH" in
   linux-x86_64)  TARGET="linux-x64" ;;
   darwin-arm64)  TARGET="darwin-arm64" ;;
-  darwin-x86_64) TARGET="darwin-x64" ;;
+  darwin-x86_64)
+    echo "joust: Intel macOS (darwin-x64) is not currently published as a release binary." >&2
+    echo "joust: install from source: git clone https://github.com/$REPO && cd joust && bun build ./src/cli.ts --compile --outfile ~/.local/bin/joust" >&2
+    echo "joust: or run the darwin-arm64 binary under Rosetta if available." >&2
+    exit 1
+    ;;
   *)
     echo "joust: unsupported platform $OS-$ARCH" >&2
-    echo "joust: supported: linux-x64, darwin-arm64, darwin-x64" >&2
+    echo "joust: supported: linux-x64, darwin-arm64" >&2
     exit 1
     ;;
 esac
