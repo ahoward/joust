@@ -1,0 +1,96 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "tag to build (e.g. v0.2.0). leave blank to build HEAD without releasing"
+        required: false
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            asset: joust-linux-x64
+          - os: macos-latest
+            target: darwin-arm64
+            asset: joust-darwin-arm64
+          - os: macos-13
+            target: darwin-x64
+            asset: joust-darwin-x64
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: install deps
+        run: bun install --frozen-lockfile || bun install
+
+      - name: build
+        run: bun build ./src/cli.ts --compile --outfile ${{ matrix.asset }}
+
+      - name: smoke test --version
+        run: ./${{ matrix.asset }} --version
+
+      - name: compute sha256 (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sha256sum ${{ matrix.asset }} > ${{ matrix.asset }}.sha256
+
+      - name: compute sha256 (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: shasum -a 256 ${{ matrix.asset }} > ${{ matrix.asset }}.sha256
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: stage release files
+        run: |
+          mkdir -p release
+          for d in dist/joust-*/; do
+            cp "$d"/* release/
+          done
+          # ship install.sh as a release asset too so users can pin a version
+          cp install.sh release/install.sh
+          ls -la release/
+
+      - name: publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
