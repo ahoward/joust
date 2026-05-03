@@ -1,0 +1,29 @@
+This plan is a well-intentioned but naive attempt to bolt an "agent-friendly" facade onto a developer-centric workflow. It prioritizes the author's convenience over the agent's operational needs, creating a brittle system whose failure modes will frustrate any user, human or AI. The core premise—that an agent can reliably build a 100MB binary from source as a first-time setup step—is fundamentally flawed.
+
+Here are the substantive critiques.
+
+### 1. The "Build-from-Source" Install is a House of Cards for an Agent
+
+The plan's decision to make a 30+ second, multi-dependency build process the *default* installation path for an agent is malpractice. An agent's environment is not a developer's laptop. It requires speed, determinism, and minimal dependencies.
+
+*   **Failure Mode: Environment Mismatch.** The script checks for `bun`, but what about the correct version of `bun`? What about system libraries `bun` or the TypeScript compilation might depend on? What about available memory? A build can fail for a dozen reasons (`OOM killer`, `glibc` mismatch, network flakiness fetching dependencies) that are entirely opaque to the agent. The script's proposed error handling is a naive "error with a hint," which is useless to an agent that can't read, reason about, and act on arbitrary error messages.
+*   **Failure Mode: Timeouts and State Confusion.** An agent operating within a turn-based or time-limited execution window cannot afford to wait for a compilation that might take 30 seconds on an M3 Max but 3 minutes on a constrained cloud VM. The agent will likely time out, lose context, and report a generic failure, leaving the user's file system in a partially-installed state.
+*   **The Solution is Obvious and Deferred.** Phase 2 is not "eventual"; it is the *only acceptable Phase 0*. The primary installation path for an agent must be downloading a pre-compiled, statically-linked binary. Building from source should be the deep-fallback, expert-only option, not the front door.
+
+### 2. The Skill is a "Leaky Abstraction," Not a "Thin Wrapper"
+
+The plan claims the skill is a "thin wrapper" that remains "orthogonal to the binary." This is a fantasy. The moment a skill's command, like `review.md` or `status.md`, is responsible for parsing and translating the binary's output, it becomes a fragile, tightly-coupled presentation layer.
+
+*   **Implicit Contract, Guaranteed Breakage.** The skill's markdown files will inevitably make assumptions about the structure, format, and even color codes of `joust`'s stdout. When the binary's output format changes—even slightly, like reordering a column in `joust status`—the skill will break silently. The agent will receive malformed data, misinterpret the state of the system, and give the user incorrect information. This creates a hidden maintenance burden where every CLI change requires a corresponding, un-versioned change to the markdown skill.
+*   **Complexity Leakage.** The binary's complexity isn't being hidden; it's being smeared into the skill. Flags, arguments, and state management concepts (`.joust/<slug>/`) are all exposed. The skill doesn't simplify the agent's interaction; it just forces the agent to learn `joust`'s interface via a layer of markdown indirection. A truly effective skill would offer a higher-level, semantic interface (e.g., "summarize the results of the last run") that abstracts away the specific commands and output parsing. This plan does the opposite.
+
+### 3. The Agent's First-Contact Experience is Clumsy and Error-Prone
+
+The proposed user flow—"if `joust` isn't on PATH, invoke `/joust install` first"—fatally misunderstands an agent's operational logic. This is not a seamless experience; it's a manual, two-step process that invites failure.
+
+*   **Discovery Failure.** An agent's first instinct upon being asked to "draft a blog post using joust" will be to invoke `/joust draft`. The skill's response, "first, run this other command," is a conversational dead-end. A robust skill should handle its own dependencies transparently. The `draft.md` command itself should contain the logic: "check if `joust` exists; if not, install it; then execute the draft command." Forcing a separate, user- or agent-invoked installation command is brittle and poor UX.
+*   **The `PATH` Problem is a Dealbreaker.** The plan's solution to `~/.local/bin` not being on `PATH` is to "warn." An agent cannot act on this warning. It cannot edit a user's `.zshrc` or `.bash_profile`. It will simply fail on the next step when it tries to execute `joust`. This isn't a warning; it's a fatal, unrecoverable error for the agent. The install script *must* either place the binary on a path that is guaranteed to be in the default `PATH` (like `/usr/local/bin`, which requires `sudo` and is rightly avoided) or provide the agent with the full, absolute path to the binary upon successful installation so it can be invoked directly. The current plan punts on the single most common point of failure for CLI tool installation.
+
+***
+
+**Rethink.** This plan should not ship. It optimizes for the developer's desire to avoid CI/CD at the direct expense of the agent's (and user's) need for a reliable, deterministic, and seamless experience. The core premise of a source-build install is wrong for this context. Phase 2 is not optional; it is the mandatory starting point. The install script must be rewritten to be a downloader for pre-compiled release artifacts. Only then can a skill be built on top of that reliable foundation, and that skill must be designed to handle its own installation dependencies transparently rather than forcing a fragile, multi-step workflow on the agent.

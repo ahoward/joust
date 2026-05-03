@@ -15,11 +15,12 @@ normalize_gemini_env();
 // --- known commands (slash-prefixed) ---
 
 const COMMANDS = new Set([
-  "init", "prompt", "run", "tail", "status", "export", "diff", "plan", "ask", "help",
+  "init", "prompt", "run", "tail", "status", "export", "diff", "plan", "ask", "help", "version",
 ]);
 
 function parse_command(raw: string): { command: string; is_command: boolean } {
   if (raw === "--help" || raw === "-h") return { command: "help", is_command: true };
+  if (raw === "--version" || raw === "-v") return { command: "version", is_command: true };
   if (raw.startsWith("/")) {
     const name = raw.slice(1);
     if (COMMANDS.has(name)) return { command: name, is_command: true };
@@ -30,17 +31,20 @@ function parse_command(raw: string): { command: string; is_command: boolean } {
 
 // --- arg parsing ---
 
-function parse_args(argv: string[]): { command: string; is_command: boolean; rest: string[]; options: RunOptions; preset?: Preset } {
+function parse_args(argv: string[]): { command: string; is_command: boolean; rest: string[]; options: RunOptions; preset?: Preset; json: boolean } {
   const first = argv[0] ?? "--help";
   const { command, is_command } = parse_command(first);
   const rest: string[] = [];
   const options: RunOptions = {};
   let preset: Preset | undefined;
+  let json = false;
 
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
 
-    if (arg === "--tank") {
+    if (arg === "--json") {
+      json = true;
+    } else if (arg === "--tank") {
       options.tank = true;
     } else if (arg.startsWith("--timebox")) {
       if (arg.includes("=")) {
@@ -76,11 +80,11 @@ function parse_args(argv: string[]): { command: string; is_command: boolean; res
     }
   }
 
-  return { command, is_command, rest, options, preset };
+  return { command, is_command, rest, options, preset, json };
 }
 
 async function main() {
-  const { command, is_command, rest, options, preset } = parse_args(process.argv.slice(2));
+  const { command, is_command, rest, options, preset, json } = parse_args(process.argv.slice(2));
 
   // bare string — treat entire argv as a prompt and draft it
   // e.g. `joust "design a caching layer"` => `joust /draft "design a caching layer"`
@@ -116,12 +120,12 @@ async function main() {
     }
 
     case "status": {
-      status(rest[0] || ".");
+      status(rest[0] || ".", { json });
       break;
     }
 
     case "export": {
-      export_draft(rest[0] || ".");
+      export_draft(rest[0] || ".", { json });
       break;
     }
 
@@ -150,7 +154,20 @@ async function main() {
       print_help();
       break;
     }
+
+    case "version": {
+      print_version();
+      break;
+    }
   }
+}
+
+// version is read from package.json via bun's import-as-json. compiled
+// binaries embed package.json so this works post-bundle.
+import pkg from "../package.json" with { type: "json" };
+function print_version() {
+  // print to stdout (not stderr like log()) so install scripts can capture
+  process.stdout.write(`v${pkg.version}\n`);
 }
 
 function print_help() {

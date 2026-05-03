@@ -1,76 +1,138 @@
-#!/usr/bin/env bash
-#
-# joust installer
+#!/bin/sh
+# joust installer — downloads a release binary, verifies sha256, places it on PATH.
 #
 # usage:
-#   curl -fsSL https://raw.githubusercontent.com/ahoward/joust/main/install.sh | bash
+#   curl -fsSL https://github.com/ahoward/joust/releases/latest/download/install.sh | sh
 #
-set -euo pipefail
+# env overrides:
+#   JOUST_VERSION=v0.2.0      pin a specific version (default: latest)
+#   JOUST_INSTALL_DIR=/path   install location (default: $HOME/.local/bin)
+#
+# output (when install dir is NOT on $PATH):
+#   the last line of stdout is `JOUST_BINARY=<absolute_path>` so a calling
+#   agent / skill can invoke joust by absolute path even without a PATH update.
+
+set -eu
 
 REPO="ahoward/joust"
-INSTALL_DIR="${JOUST_INSTALL_DIR:-/usr/local/bin}"
-BINARY="joust"
+VERSION="${JOUST_VERSION:-latest}"
+INSTALL_DIR="${JOUST_INSTALL_DIR:-$HOME/.local/bin}"
 
-# --- detect platform ---
+# --- detect platform/arch ---
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
-case "$OS" in
-  linux)  OS="linux" ;;
-  darwin) OS="darwin" ;;
-  *)      echo "error: unsupported OS: $OS" >&2; exit 1 ;;
+case "$OS-$ARCH" in
+  linux-x86_64)  TARGET="linux-x64" ;;
+  darwin-arm64)  TARGET="darwin-arm64" ;;
+  darwin-x86_64) TARGET="darwin-x64" ;;
+  *)
+    echo "joust: unsupported platform $OS-$ARCH" >&2
+    echo "joust: supported: linux-x64, darwin-arm64, darwin-x64" >&2
+    exit 1
+    ;;
 esac
 
-case "$ARCH" in
-  x86_64|amd64)  ARCH="x64" ;;
-  arm64|aarch64) ARCH="arm64" ;;
-  *)             echo "error: unsupported architecture: $ARCH" >&2; exit 1 ;;
-esac
+ASSET="joust-$TARGET"
 
-ASSET="joust-${OS}-${ARCH}"
+# --- resolve release URL ---
 
-echo "joust installer"
-echo "  platform: ${OS}-${ARCH}"
-echo "  install:  ${INSTALL_DIR}/${BINARY}"
-echo ""
+if [ "$VERSION" = "latest" ]; then
+  BASE="https://github.com/$REPO/releases/latest/download"
+else
+  BASE="https://github.com/$REPO/releases/download/$VERSION"
+fi
 
-# --- fetch latest release tag ---
+BINARY_URL="$BASE/$ASSET"
+SHA_URL="$BASE/$ASSET.sha256"
 
-TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
+# --- platform-aware sha256 verification ---
 
-if [ -z "$TAG" ]; then
-  echo "error: could not determine latest release" >&2
+verify_sha256() {
+  expected="$1"
+  file="$2"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$file" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+  else
+    echo "joust: neither sha256sum nor shasum found; cannot verify" >&2
+    return 1
+  fi
+  if [ "$expected" != "$actual" ]; then
+    echo "joust: checksum mismatch for $file" >&2
+    echo "  expected: $expected" >&2
+    echo "  actual:   $actual" >&2
+    return 1
+  fi
+}
+
+# --- download to a temp dir, verify, then atomic mv ---
+
+TMPDIR="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR"' EXIT INT TERM
+
+echo "joust: downloading $ASSET from $BINARY_URL"
+if ! curl --fail --silent --show-error -L "$BINARY_URL" -o "$TMPDIR/joust"; then
+  echo "joust: download failed" >&2
   exit 1
 fi
 
-echo "  version:  ${TAG}"
-
-URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
-
-# --- download ---
-
-echo ""
-echo "downloading ${URL}..."
-
-TMPFILE=$(mktemp)
-trap 'rm -f "$TMPFILE"' EXIT
-
-curl -fSL --progress-bar -o "$TMPFILE" "$URL"
-
-chmod +x "$TMPFILE"
-
-# --- install ---
-
-if [ -w "$INSTALL_DIR" ]; then
-  mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}"
-else
-  echo ""
-  echo "installing to ${INSTALL_DIR} (requires sudo)..."
-  sudo mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}"
+echo "joust: downloading checksum"
+if ! curl --fail --silent --show-error -L "$SHA_URL" -o "$TMPDIR/joust.sha256"; then
+  echo "joust: checksum download failed" >&2
+  exit 1
 fi
 
-echo ""
-echo "installed: $(${INSTALL_DIR}/${BINARY} --help 2>&1 | head -1)"
-echo ""
-echo "done. run: joust --help"
+EXPECTED_SHA="$(awk '{print $1}' "$TMPDIR/joust.sha256")"
+if [ -z "$EXPECTED_SHA" ]; then
+  echo "joust: empty checksum file from $SHA_URL" >&2
+  exit 1
+fi
+
+echo "joust: verifying checksum"
+if ! verify_sha256 "$EXPECTED_SHA" "$TMPDIR/joust"; then
+  exit 1
+fi
+
+# --- ensure install dir exists, place binary atomically ---
+
+if ! mkdir -p "$INSTALL_DIR"; then
+  echo "joust: cannot create $INSTALL_DIR" >&2
+  exit 1
+fi
+
+if [ ! -w "$INSTALL_DIR" ]; then
+  echo "joust: $INSTALL_DIR is not writable by $(id -un)" >&2
+  echo "joust: set JOUST_INSTALL_DIR=<path> to override" >&2
+  exit 1
+fi
+
+chmod +x "$TMPDIR/joust"
+mv "$TMPDIR/joust" "$INSTALL_DIR/joust"
+
+# --- verify install ---
+
+if ! "$INSTALL_DIR/joust" --version >/dev/null 2>&1; then
+  echo "joust: installed binary failed --version probe at $INSTALL_DIR/joust" >&2
+  exit 1
+fi
+
+INSTALLED="$("$INSTALL_DIR/joust" --version)"
+echo "joust: installed $INSTALLED at $INSTALL_DIR/joust"
+
+# --- PATH detection ---
+# if the install dir is on $PATH, we're done. otherwise emit a parseable
+# JOUST_BINARY=<path> line so a calling agent can capture it.
+
+case ":${PATH:-}:" in
+  *":$INSTALL_DIR:"*)
+    : # on PATH; nothing more to do
+    ;;
+  *)
+    echo "joust: $INSTALL_DIR is not on \$PATH; add this to your shell init:"
+    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+    echo "JOUST_BINARY=$INSTALL_DIR/joust"
+    ;;
+esac

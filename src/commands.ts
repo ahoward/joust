@@ -11,13 +11,49 @@ import type { HistoryEntry } from "./types";
 
 // --- joust status ---
 
-export function status(dir: string): void {
+export function status(dir: string, opts: { json?: boolean } = {}): void {
   dir = resolve(dir);
   const files = scan_history(dir);
   const latest = read_latest_history(dir);
 
   if (!latest) {
-    log("no history found — run 'joust init' first");
+    if (opts.json) {
+      process.stdout.write(JSON.stringify({ error: "no history found", dir }) + "\n");
+    } else {
+      log("no history found — run 'joust init' first");
+    }
+    return;
+  }
+
+  // --- machine-readable form (#60) ---
+  if (opts.json) {
+    const snow: any = latest.snowball;
+    const accepted = files.filter((f) => {
+      try {
+        const e = JSON.parse(readFileSync(f.path, "utf-8"));
+        return e.status === "accepted";
+      } catch { return false; }
+    }).length;
+    const out = {
+      schema_version: 1,
+      step: latest.step,
+      actor: latest.actor,
+      action: latest.action,
+      status: latest.status,
+      history_count: files.length,
+      accepted_count: accepted,
+      rejected_count: files.length - accepted,
+      strategies: snow.strategies ?? null,
+      declined_strategies: snow.declined_strategies ?? [],
+      best_aggregate: snow.best_scoring?.weighted_aggregate ?? null,
+      best_color_tier: snow.best_scoring?.color_tier ?? null,
+      best_scorecards: snow.best_scoring?.scorecards ?? [],
+      aggregate_history: snow.aggregate_history ?? [],
+      pending_summon: snow.pending_summon ?? null,
+      draft_chars: (snow.best_draft ?? snow.draft).length,
+      critique_count: snow.critique_trail?.length ?? 0,
+    };
+    process.stdout.write(JSON.stringify(out, null, 2) + "\n");
     return;
   }
 
@@ -82,18 +118,40 @@ export function status(dir: string): void {
 
 // --- joust export ---
 
-export function export_draft(dir: string): void {
+export function export_draft(dir: string, opts: { json?: boolean } = {}): void {
   dir = resolve(dir);
   set_log_dir(dir);
   const latest = read_latest_history(dir);
 
   if (!latest) {
+    if (opts.json) {
+      process.stdout.write(JSON.stringify({ error: "no history found", dir }) + "\n");
+      return;
+    }
     throw new JoustUserError("no history found — run 'joust /init' first");
   }
 
   // phase 1 of #42: emit best_draft when strategy scoring tracked it;
   // fall back to current draft for legacy runs that never scored.
   const out = latest.snowball.best_draft ?? latest.snowball.draft;
+
+  // machine-readable form (#60). bundles the draft + structured scoring
+  // so a skill can render scores in conversation without re-running
+  // /status. schema_version pins the contract.
+  if (opts.json) {
+    const snow: any = latest.snowball;
+    const payload = {
+      schema_version: 1,
+      draft: out,
+      best_aggregate: snow.best_scoring?.weighted_aggregate ?? null,
+      best_color_tier: snow.best_scoring?.color_tier ?? null,
+      scorecards: snow.best_scoring?.scorecards ?? [],
+      strategies: snow.strategies ?? null,
+    };
+    process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+    return;
+  }
+
   write_stdout(out);
 }
 

@@ -117,9 +117,30 @@ joust is designed to be invoked from within AI coding agents like Claude Code,
 Gemini CLI, Cursor, Windsurf, Cline, etc. the `/` command syntax was designed
 for this -- it mirrors slash commands in Claude Code and similar tools.
 
-### Claude Code setup
+### Claude Code: skill (recommended)
 
-add a slash command to your project:
+joust ships a Claude Code skill at `.claude/skills/joust/`. clone this repo,
+start a Claude Code session in it, and the agent will discover the skill
+automatically. four subcommands:
+
+```
+/joust draft <prompt>    # bootstrap + run, with confirmation
+/joust pickup [dir]      # resume the latest in-progress run
+/joust review [dir]      # show scores in detail
+/joust status [dir]      # one-line summary
+```
+
+the skill's first invocation auto-installs the joust binary if missing,
+verifies its checksum, and pins to a compatible version range. uses
+`joust /status --json` and `joust /export --json` to read state, never
+parses human-formatted stdout.
+
+if you want the skill available in any repo (not just this one), copy
+`.claude/skills/joust/` to `~/.claude/skills/joust/`.
+
+### Claude Code: simple slash command
+
+if you prefer a thin passthrough instead of the skill, add a slash command to your project:
 
 ```bash
 mkdir -p .claude/commands
