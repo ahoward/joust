@@ -37,7 +37,7 @@ commands use `/` prefix to disambiguate from bare prompts:
 
 | flag | description |
 |------|-------------|
-| `--preset <name>` | agent preset: anthropic, gemini, openai, mixed (auto-detected from env) |
+| `--preset <name>` | agent preset: anthropic, gemini, openai, grok, mixed (auto-detected from env) |
 | `--interactive[=N]` | pause for human feedback every N rounds (default 1) |
 | `--timebox <duration>` | autonomy budget — soft limit, lets inflight request finish |
 | `--timeout <duration>` | hard limit — fires AbortController on inflight requests |

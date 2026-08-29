@@ -154,8 +154,13 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
 
   log(`bootstrapping joust from prompt...`);
 
+  // resolve the preset first — the bootstrap call below runs on main, so the
+  // preset has to be in effect before it, not just in the written config.
+  const effective_preset = preset ?? detect_preset();
+  log(`preset: ${effective_preset}`);
+
   // resolve config (no project dir yet)
-  const config = resolve_config();
+  const config = resolve_config(undefined, effective_preset);
   const main = get_main_agent(config);
 
   // give bootstrap access to the cwd as workspace — without this, main has to
@@ -216,9 +221,7 @@ export async function init(args: string[], preset?: Preset): Promise<string> {
     declined_strategies: declined.length > 0 ? declined : undefined,
   };
 
-  // write config snapshot — auto-detect preset from env if not specified
-  const effective_preset = preset ?? detect_preset();
-  log(`preset: ${effective_preset}`);
+  // write config snapshot on the preset resolved above
   write_atomic(join(dir, "config.json"), generate_default_config(effective_preset) + "\n");
 
   // write seed history entry

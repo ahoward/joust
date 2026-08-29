@@ -10,6 +10,11 @@ import {
   generate_default_config,
   normalize_gemini_env,
   has_gemini_key,
+  normalize_grok_env,
+  has_grok_key,
+  detect_preset,
+  is_preset,
+  PRESETS,
   SPECIALISTS,
   PRESET_CONFIGS,
 } from "../src/config";
@@ -154,8 +159,16 @@ describe("generate_default_config", () => {
     expect(cfg.agents.peer.api_key).toBe("$GOOGLE_GENERATIVE_AI_API_KEY");
   });
 
-  test("all preset configs are valid JSON for all four presets", () => {
-    for (const preset of ["anthropic", "gemini", "openai", "mixed"] as const) {
+  test("grok preset uses grok-4.6 on both slots with $XAI_API_KEY", () => {
+    const cfg = JSON.parse(generate_default_config("grok"));
+    expect(cfg.agents.main.model).toBe("grok-4.6");
+    expect(cfg.agents.peer.model).toBe("grok-4.6");
+    expect(cfg.agents.main.api_key).toBe("$XAI_API_KEY");
+    expect(cfg.agents.peer.api_key).toBe("$XAI_API_KEY");
+  });
+
+  test("all preset configs are valid JSON for every preset", () => {
+    for (const preset of PRESETS) {
       const cfg = JSON.parse(generate_default_config(preset));
       expect(cfg.defaults).toBeDefined();
       expect(cfg.agents.main).toBeDefined();
@@ -296,5 +309,102 @@ describe("build_scorer_agent (#51)", () => {
     expect(scorer.name).toBe("main-scorer");
     // does not mutate main
     expect(main.model).toBe("claude-opus-4-6");
+  });
+});
+
+describe("grok preset + env", () => {
+  const PROVIDER_KEYS = [
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+    "XAI_API_KEY",
+    "GROK_API_KEY",
+  ] as const;
+
+  // detect_preset reads raw env — snapshot and clear every provider key so
+  // the developer's real environment can't leak into the assertion.
+  function with_clean_env(fn: () => void): void {
+    const saved: Record<string, string | undefined> = {};
+    for (const k of PROVIDER_KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    try {
+      fn();
+    } finally {
+      for (const k of PROVIDER_KEYS) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    }
+  }
+
+  test("resolve_config on the grok preset puts main + peer on grok", () => {
+    const config = resolve_config(undefined, "grok");
+    expect(config.agents.main!.model).toBe("grok-4.6");
+    expect(config.agents.main!.api_key).toBe("$XAI_API_KEY");
+    expect(config.agents.peer!.model).toBe("grok-4.6");
+    expect(config.agents.peer!.api_key).toBe("$XAI_API_KEY");
+  });
+
+  test("resolve_config defaults to the mixed panel when no preset is given", () => {
+    const config = resolve_config();
+    expect(config.agents.main!.model).toBe("claude-opus-4-6");
+    expect(config.agents.peer!.model).toBe("gemini-2.5-pro");
+  });
+
+  test("grok is a recognized preset", () => {
+    expect(is_preset("grok")).toBe(true);
+    expect(PRESETS).toContain("grok");
+  });
+
+  test("PRESET_CONFIGS.grok pins grok on main and peer", () => {
+    expect(PRESET_CONFIGS.grok.main.model).toBe("grok-4.6");
+    expect(PRESET_CONFIGS.grok.peer.api_key).toBe("$XAI_API_KEY");
+  });
+
+  test("has_grok_key sees either XAI_API_KEY or GROK_API_KEY", () => {
+    with_clean_env(() => {
+      expect(has_grok_key()).toBe(false);
+      process.env.GROK_API_KEY = "k";
+      expect(has_grok_key()).toBe(true);
+      delete process.env.GROK_API_KEY;
+      process.env.XAI_API_KEY = "k";
+      expect(has_grok_key()).toBe(true);
+    });
+  });
+
+  test("normalize_grok_env mirrors GROK_API_KEY to XAI_API_KEY", () => {
+    with_clean_env(() => {
+      process.env.GROK_API_KEY = "test-grok-key";
+      normalize_grok_env();
+      expect(process.env.XAI_API_KEY).toBe("test-grok-key");
+    });
+  });
+
+  test("normalize_grok_env does not overwrite XAI_API_KEY when set", () => {
+    with_clean_env(() => {
+      process.env.XAI_API_KEY = "xai-key";
+      process.env.GROK_API_KEY = "grok-key";
+      normalize_grok_env();
+      expect(process.env.XAI_API_KEY).toBe("xai-key");
+    });
+  });
+
+  test("detect_preset picks grok when it is the only key present", () => {
+    with_clean_env(() => {
+      process.env.XAI_API_KEY = "k";
+      expect(detect_preset()).toBe("grok");
+    });
+  });
+
+  test("detect_preset prefers mixed over grok when anthropic + gemini are set", () => {
+    with_clean_env(() => {
+      process.env.XAI_API_KEY = "k";
+      process.env.ANTHROPIC_API_KEY = "k";
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY = "k";
+      expect(detect_preset()).toBe("mixed");
+    });
   });
 });

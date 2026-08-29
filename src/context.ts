@@ -17,6 +17,13 @@ const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   "claude-haiku-4-5": 200_000,
   "gemini-2.5-pro": 1_000_000,
   "gpt-4o": 128_000,
+  // grok — most specific prefixes first; check_context_size takes the first match
+  "grok-4.6": 500_000,
+  "grok-4.5": 500_000,
+  "grok-4.3": 1_000_000,
+  "grok-4.20": 1_000_000,
+  "grok-build": 256_000,
+  "grok-": 256_000,
   "gpt-4-turbo": 128_000,
   "o1": 200_000,
 };

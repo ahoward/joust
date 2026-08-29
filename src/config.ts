@@ -20,7 +20,10 @@ const DEFAULT_DEFAULTS: JoustDefaults = {
 // default panel: two peer lead architects. same system prompt, different
 // providers. specialists are summoned on demand by either peer, not
 // pre-baked into the panel.
-const BUILTIN_AGENTS: Record<string, Omit<AgentConfig, "name">> = {
+//
+// model + api_key here are placeholders — builtin_agents() overwrites both
+// from the active preset. only the system prompts are load-bearing.
+const BUILTIN_AGENTS = {
   main: {
     model: "claude-opus-4-6",
     api_key: "$ANTHROPIC_API_KEY",
@@ -42,6 +45,17 @@ const BUILTIN_AGENTS: Record<string, Omit<AgentConfig, "name">> = {
       "summon the relevant specialist with a specific, scoped question.",
   },
 };
+
+// layer 1 of resolve_config: the built-in panel, with model + api_key taken
+// from the requested preset. defaults to "mixed", which is what the built-in
+// panel has always been. global/project config still overrides on top.
+function builtin_agents(preset: Preset): Record<string, Omit<AgentConfig, "name">> {
+  const pick = PRESET_CONFIGS[preset];
+  return {
+    main: { ...BUILTIN_AGENTS.main, model: pick.main.model, api_key: pick.main.api_key },
+    peer: { ...BUILTIN_AGENTS.peer, model: pick.peer.model, api_key: pick.peer.api_key },
+  };
+}
 
 // --- resolve config ---
 
@@ -65,12 +79,12 @@ function expand_agent_config(name: string, raw: Record<string, any>, defaults: J
   };
 }
 
-export function resolve_config(project_dir?: string): JoustConfig {
+export function resolve_config(project_dir?: string, preset: Preset = "mixed"): JoustConfig {
   let merged_defaults = { ...DEFAULT_DEFAULTS };
   let merged_agents: Record<string, any> = {};
 
-  // layer 1: built-in agents
-  for (const [name, agent] of Object.entries(BUILTIN_AGENTS)) {
+  // layer 1: built-in agents, on the requested preset's providers
+  for (const [name, agent] of Object.entries(builtin_agents(preset))) {
     merged_agents[name] = { ...agent };
   }
 
@@ -167,11 +181,23 @@ export function build_scorer_agent(main: AgentConfig, scorer_model?: string): Ag
 
 // --- presets ---
 
-export const PRESETS = ["anthropic", "gemini", "openai", "mixed"] as const;
+export const PRESETS = ["anthropic", "gemini", "openai", "grok", "mixed"] as const;
 export type Preset = (typeof PRESETS)[number];
 
 export function is_preset(s: string): s is Preset {
   return (PRESETS as readonly string[]).includes(s);
+}
+
+export function has_grok_key(): boolean {
+  return !!(process.env.XAI_API_KEY || process.env.GROK_API_KEY);
+}
+
+// the xai provider reads XAI_API_KEY. mirror GROK_API_KEY onto it so users
+// who named the var after the model don't have to rename anything.
+export function normalize_grok_env(): void {
+  if (!process.env.XAI_API_KEY && process.env.GROK_API_KEY) {
+    process.env.XAI_API_KEY = process.env.GROK_API_KEY;
+  }
 }
 
 export function has_gemini_key(): boolean {
@@ -191,11 +217,13 @@ export function detect_preset(): Preset {
   const has_anthropic = !!process.env.ANTHROPIC_API_KEY;
   const has_gemini = has_gemini_key();
   const has_openai = !!process.env.OPENAI_API_KEY;
+  const has_grok = has_grok_key();
 
   // two-company default: Claude + Gemini beats single-provider
   if (has_anthropic && has_gemini) return "mixed";
   if (has_gemini && !has_anthropic) return "gemini";
   if (has_openai && !has_anthropic && !has_gemini) return "openai";
+  if (has_grok && !has_anthropic && !has_gemini && !has_openai) return "grok";
   return "anthropic"; // default — will fail at call time with a clear error if key is missing
 }
 
@@ -217,6 +245,7 @@ const ANTHROPIC_OPUS:   ProviderPick = { model: "claude-opus-4-6",   api_key: "$
 const ANTHROPIC_SONNET: ProviderPick = { model: "claude-sonnet-4-6", api_key: "$ANTHROPIC_API_KEY" };
 const GEMINI_PRO:       ProviderPick = { model: "gemini-2.5-pro",    api_key: "$GOOGLE_GENERATIVE_AI_API_KEY" };
 const OPENAI_GPT4O:     ProviderPick = { model: "gpt-4o",            api_key: "$OPENAI_API_KEY" };
+const GROK_4:           ProviderPick = { model: "grok-4.6",          api_key: "$XAI_API_KEY" };
 
 export const PRESET_CONFIGS: Record<Preset, PresetConfig> = {
   // two-company default — claude + gemini. adversarial because they're
@@ -226,6 +255,7 @@ export const PRESET_CONFIGS: Record<Preset, PresetConfig> = {
   anthropic: { main: ANTHROPIC_OPUS, peer: ANTHROPIC_SONNET },
   gemini:    { main: GEMINI_PRO,     peer: GEMINI_PRO       },
   openai:    { main: OPENAI_GPT4O,   peer: OPENAI_GPT4O     },
+  grok:      { main: GROK_4,         peer: GROK_4           },
 };
 
 export function preset_peer_pick(preset: Preset): ProviderPick {
