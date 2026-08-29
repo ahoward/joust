@@ -3,6 +3,7 @@ import type { ToolSet } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createXai } from "@ai-sdk/xai";
 import type { z } from "zod";
 import { appendFileSync, mkdirSync } from "fs";
 import { join } from "path";
@@ -41,6 +42,11 @@ function get_model(agent: AgentConfig) {
   if (model_id.startsWith("gemini-") || model_id.startsWith("google/")) {
     const provider = createGoogleGenerativeAI({ apiKey: api_key, fetch: no_timeout_fetch });
     return provider(model_id.replace("google/", ""));
+  }
+
+  if (model_id.startsWith("grok-") || model_id.startsWith("xai/")) {
+    const provider = createXai({ apiKey: api_key, fetch: no_timeout_fetch });
+    return provider(model_id.replace("xai/", ""));
   }
 
   if (model_id.startsWith("gpt-") || model_id.startsWith("o1") || model_id.startsWith("openai/")) {

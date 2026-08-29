@@ -6,11 +6,13 @@ import { tail } from "./tail";
 import { status, export_draft, diff, plan, ask } from "./commands";
 import { log } from "./utils";
 import { JoustError, JoustUserError } from "./errors";
-import { is_preset, PRESETS, normalize_gemini_env, type Preset } from "./config";
+import { is_preset, PRESETS, normalize_gemini_env, normalize_grok_env, type Preset } from "./config";
 
-// mirror GEMINI_API_KEY → GOOGLE_GENERATIVE_AI_API_KEY so either works.
-// Must run before any agent config resolution or API call.
+// mirror GEMINI_API_KEY → GOOGLE_GENERATIVE_AI_API_KEY and GROK_API_KEY →
+// XAI_API_KEY so either name works. Must run before any agent config
+// resolution or API call.
 normalize_gemini_env();
+normalize_grok_env();
 
 // --- known commands (slash-prefixed) ---
 
@@ -197,6 +199,7 @@ function print_help() {
   log("  anthropic               opus main + sonnet peer");
   log("  gemini                  gemini-2.5-pro main + peer");
   log("  openai                  gpt-4o main + peer");
+  log("  grok                    grok-4.6 main + peer");
   log("");
   log("examples:");
   log('  joust "design a caching layer for a mobile api"');

@@ -89,10 +89,14 @@ joust auto-detects your API keys and picks the best preset:
 
 | env var | preset |
 |---------|--------|
-| `ANTHROPIC_API_KEY` only | `anthropic` -- opus main + sonnet jousters |
-| `GOOGLE_GENERATIVE_AI_API_KEY` only | `gemini` -- gemini-2.5-pro all agents |
-| `OPENAI_API_KEY` only | `openai` -- gpt-4o all agents |
-| multiple keys set | `mixed` -- opus main + gemini security + gpt-4o cfo |
+| `ANTHROPIC_API_KEY` only | `anthropic` -- opus main + sonnet peer |
+| `GOOGLE_GENERATIVE_AI_API_KEY` only | `gemini` -- gemini-2.5-pro main + peer |
+| `OPENAI_API_KEY` only | `openai` -- gpt-4o main + peer |
+| `XAI_API_KEY` only | `grok` -- grok-4.6 main + peer |
+| anthropic + gemini keys set | `mixed` -- opus main + gemini-2.5-pro peer |
+
+`GEMINI_API_KEY` and `GROK_API_KEY` are accepted as aliases for
+`GOOGLE_GENERATIVE_AI_API_KEY` and `XAI_API_KEY`.
 
 override with `--preset`: `joust --preset gemini "my prompt"`
 
@@ -205,11 +209,12 @@ flags:
   --timeout <duration>    hard kill limit
   --tank                  unstoppable mode (backoff 429s, skip 5xx)
 
-presets:
-  anthropic               opus main + sonnet jousters
-  gemini                  gemini-2.5-pro all agents
-  openai                  gpt-4o all agents
-  mixed                   opus main + gemini security + gpt-4o cfo
+presets (default panel: two peer lead architects, specialists summoned on demand):
+  mixed                   opus main + gemini peer (default when both keys set)
+  anthropic               opus main + sonnet peer
+  gemini                  gemini-2.5-pro main + peer
+  openai                  gpt-4o main + peer
+  grok                    grok-4.6 main + peer
 ```
 
 the `/prompt` command exists for when your prompt text itself starts with `/`:
